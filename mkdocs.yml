@@ -1,0 +1,203 @@
+# MkDocs Configuration - Spotify TechDocs Style
+# https://www.mkdocs.org/user-guide/configuration/
+
+site_name: Actionable Segmentation Engine
+site_description: ML + LLM-driven customer segmentation with robustness validation
+site_url: https://skmetricmavens.github.io/actionable-segmentation-engine/
+repo_url: https://github.com/skmetricmavens/actionable-segmentation-engine
+repo_name: skmetricmavens/actionable-segmentation-engine
+edit_uri: edit/main/docs/
+
+# Theme configuration - Material Design
+theme:
+  name: material
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep-purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep-purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.tabs.link
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - content.action.view
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+    admonition:
+      note: fontawesome/solid/note-sticky
+      abstract: fontawesome/solid/book
+      info: fontawesome/solid/circle-info
+      tip: fontawesome/solid/bullhorn
+      success: fontawesome/solid/check
+      question: fontawesome/solid/circle-question
+      warning: fontawesome/solid/triangle-exclamation
+      failure: fontawesome/solid/bomb
+      danger: fontawesome/solid/skull
+      bug: fontawesome/solid/robot
+      example: fontawesome/solid/flask
+      quote: fontawesome/solid/quote-left
+
+# Plugins
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            heading_level: 2
+            merge_init_into_class: true
+            show_signature_annotations: true
+            separate_signature: true
+            show_bases: true
+            show_submodules: true
+  - tags:
+      tags_file: tags.md
+
+# Markdown extensions
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+      auto_title: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: skmetricmavens
+      repo: actionable-segmentation-engine
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      auto_append:
+        - docs/includes/abbreviations.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Navigation structure
+nav:
+  - Home: index.md
+  - Getting Started:
+      - getting-started/index.md
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+      - Configuration: getting-started/configuration.md
+  - User Guide:
+      - guide/index.md
+      - Pipeline Overview: guide/pipeline.md
+      - Working with Segments: guide/segments.md
+      - Visualizations: guide/visualizations.md
+      - Exporting Results: guide/export.md
+  - Architecture:
+      - architecture/index.md
+      - System Overview: architecture/overview.md
+      - Data Flow: architecture/data-flow.md
+      - Module Reference: architecture/modules.md
+      - Exception Handling: architecture/exceptions.md
+  - ADRs:
+      - adrs/index.md
+  - Runbooks:
+      - runbooks/index.md
+      - Troubleshooting: runbooks/troubleshooting.md
+      - Performance Tuning: runbooks/performance.md
+  - API Reference:
+      - reference/index.md
+      - Pipeline: reference/pipeline.md
+      - Data Layer: reference/data.md
+      - Features Layer: reference/features.md
+      - Segmentation Layer: reference/segmentation.md
+      - LLM Layer: reference/llm.md
+      - Reporting Layer: reference/reporting.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md
+  - Tags: tags.md
+
+# Extra configuration
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/skmetricmavens/actionable-segmentation-engine
+  version:
+    provider: mike
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
+  generator: false
+  tags:
+    Machine Learning: ml
+    LLM: llm
+    Clustering: clustering
+    Data Science: data-science
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+copyright: Copyright &copy; 2024-2025 Actionable Segmentation Engine Contributors

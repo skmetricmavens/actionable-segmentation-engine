@@ -1,0 +1,60 @@
+# Backstage Catalog Info - Spotify TechDocs Integration
+# https://backstage.io/docs/features/software-catalog/descriptor-format
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: actionable-segmentation-engine
+  title: Actionable Segmentation Engine
+  description: |
+    ML + LLM-driven customer segmentation engine with robustness validation.
+    Transforms raw Bloomreach EBQ data into commercially exploitable customer
+    insights using hybrid ML clustering and LLM-powered actionability filtering.
+  annotations:
+    # TechDocs integration - docs live with code
+    backstage.io/techdocs-ref: dir:.
+    # Source location
+    backstage.io/source-location: url:https://github.com/skmetricmavens/actionable-segmentation-engine
+    # GitHub integration
+    github.com/project-slug: skmetricmavens/actionable-segmentation-engine
+  tags:
+    - python
+    - machine-learning
+    - customer-segmentation
+    - llm
+    - clustering
+    - kmeans
+    - bloomreach
+    - data-science
+    - proof-of-concept
+  links:
+    - url: https://github.com/skmetricmavens/actionable-segmentation-engine
+      title: GitHub Repository
+      icon: github
+    - url: https://skmetricmavens.github.io/actionable-segmentation-engine/
+      title: Documentation
+      icon: docs
+spec:
+  type: library
+  lifecycle: experimental
+  owner: team-data-science
+  system: customer-analytics
+  dependsOn:
+    - resource:claude-api
+
+---
+# External resource: Claude API for LLM integration
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: claude-api
+  title: Claude AI API
+  description: Anthropic's Claude API for segment actionability evaluation and explanation generation
+  tags:
+    - external
+    - llm
+    - anthropic
+spec:
+  type: api
+  owner: external
+  dependencyOf:
+    - component:actionable-segmentation-engine
