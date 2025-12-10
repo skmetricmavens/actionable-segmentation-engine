@@ -302,3 +302,21 @@ class ReportGenerationError(SegmentationEngineError):
             ctx["report_type"] = report_type
         super().__init__(message, context=ctx)
         self.report_type = report_type
+
+
+class LLMError(LLMIntegrationError):
+    """Raised when LLM operations fail (alias for LLMIntegrationError with segment context)."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        prompt_type: str | None = None,
+        segment_id: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        ctx = context or {}
+        if segment_id is not None:
+            ctx["segment_id"] = segment_id
+        super().__init__(message, prompt_type=prompt_type, context=ctx)
+        self.segment_id = segment_id
