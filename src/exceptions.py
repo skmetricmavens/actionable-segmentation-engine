@@ -320,3 +320,20 @@ class LLMError(LLMIntegrationError):
             ctx["segment_id"] = segment_id
         super().__init__(message, prompt_type=prompt_type, context=ctx)
         self.segment_id = segment_id
+
+
+class PipelineError(SegmentationEngineError):
+    """Raised when pipeline execution fails."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        stage: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        ctx = context or {}
+        if stage is not None:
+            ctx["stage"] = stage
+        super().__init__(message, context=ctx)
+        self.stage = stage
