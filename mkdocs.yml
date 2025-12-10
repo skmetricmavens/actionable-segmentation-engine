@@ -70,7 +70,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [src]
+          paths: [.]
           options:
             docstring_style: google
             show_source: true
@@ -85,8 +85,7 @@ plugins:
             separate_signature: true
             show_bases: true
             show_submodules: true
-  - tags:
-      tags_file: tags.md
+  - tags
 
 # Markdown extensions
 markdown_extensions:
