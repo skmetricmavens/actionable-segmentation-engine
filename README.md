@@ -1,6 +1,24 @@
 # Actionable Segmentation Engine
 
+[![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://skmetricmavens.github.io/actionable-segmentation-engine/)
+[![Tests](https://img.shields.io/badge/tests-492%20passing-brightgreen)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](htmlcov/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
+
 ML + LLM-driven customer segmentation with robustness validation for Bloomreach EBQ data.
+
+## Documentation
+
+**Full documentation**: [https://skmetricmavens.github.io/actionable-segmentation-engine/](https://skmetricmavens.github.io/actionable-segmentation-engine/)
+
+| Section | Description |
+|---------|-------------|
+| [Getting Started](docs/getting-started/index.md) | Installation, quick start, configuration |
+| [User Guide](docs/guide/index.md) | Pipeline overview, working with segments |
+| [Architecture](docs/architecture/index.md) | System design, data flow, modules |
+| [ADRs](docs/adrs/index.md) | Architecture Decision Records |
+| [Runbooks](docs/runbooks/index.md) | Troubleshooting, performance tuning |
+| [API Reference](docs/reference/index.md) | Auto-generated API documentation |
 
 ## Overview
 
@@ -254,6 +272,23 @@ See `notebooks/` for interactive examples:
 - **01_quick_start_demo.ipynb** - Get started in 5 minutes
 - **02_custom_configuration.ipynb** - Advanced configuration
 - **03_visualization_gallery.ipynb** - All visualization types
+
+## Building Documentation
+
+```bash
+# Install documentation dependencies
+pip install mkdocs mkdocs-material mkdocstrings[python] pymdown-extensions
+
+# Serve locally
+mkdocs serve
+
+# Build static site
+mkdocs build
+```
+
+## Backstage Integration
+
+This project includes `catalog-info.yaml` for [Backstage](https://backstage.io/) service catalog integration. The documentation follows Spotify's [TechDocs](https://backstage.io/docs/features/techdocs/) docs-like-code approach.
 
 ## License
 

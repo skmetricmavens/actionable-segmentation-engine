@@ -1,0 +1,60 @@
+/* Custom styles for Actionable Segmentation Engine docs */
+
+/* Improve code block readability */
+.md-typeset code {
+  font-size: 0.85em;
+}
+
+/* Style admonitions */
+.md-typeset .admonition {
+  margin-bottom: 1.5em;
+}
+
+/* Grid cards styling */
+.md-typeset .grid.cards > ul > li {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.5rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-accent-fg-color);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Mermaid diagram styling */
+.mermaid {
+  margin: 1.5em 0;
+}
+
+/* Table improvements */
+.md-typeset table:not([class]) {
+  font-size: 0.85em;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--md-default-fg-color--lightest);
+}
+
+/* Navigation improvements */
+.md-nav__link {
+  font-size: 0.75rem;
+}
+
+/* Footer styling */
+.md-footer-meta {
+  background-color: var(--md-default-fg-color--lightest);
+}
+
+/* API reference styling */
+.doc-contents {
+  padding-left: 1rem;
+  border-left: 3px solid var(--md-accent-fg-color);
+}
+
+.doc-signature {
+  font-size: 0.9em;
+  background-color: var(--md-code-bg-color);
+  padding: 0.5rem;
+  border-radius: 0.25rem;
+}
