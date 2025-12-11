@@ -667,7 +667,7 @@ def get_pipeline_metrics(result: PipelineResult) -> dict[str, Any]:
     # Add clustering metrics if available
     if result.clustering_result:
         metrics["silhouette_score"] = result.clustering_result.silhouette
-        metrics["inertia"] = result.clustering_result.inertia
+        metrics["cost"] = result.clustering_result.cost
 
     # Add sensitivity metrics if available
     if result.sensitivity_result:
@@ -709,8 +709,9 @@ def format_pipeline_summary(result: PipelineResult) -> str:
     if result.clustering_result:
         lines.extend([
             "CLUSTERING:",
+            f"  - Algorithm: K-Prototypes",
             f"  - Silhouette score: {result.clustering_result.silhouette:.3f}" if result.clustering_result.silhouette else "  - Silhouette score: N/A",
-            f"  - Inertia: {result.clustering_result.inertia:.1f}",
+            f"  - Cost: {result.clustering_result.cost:.1f}",
             "",
         ])
 

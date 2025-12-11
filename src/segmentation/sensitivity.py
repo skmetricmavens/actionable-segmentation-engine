@@ -53,7 +53,7 @@ class FeatureDropResult:
     dropped_feature: str
     labels: NDArray[np.int64]
     silhouette: float | None
-    inertia: float
+    cost: float  # K-Prototypes cost
     cluster_sizes: dict[int, int]
 
 
@@ -169,11 +169,11 @@ def drop_feature_from_matrix(
     feature_to_drop: str,
 ) -> FeatureMatrix:
     """
-    Create new FeatureMatrix with one feature removed.
+    Create new FeatureMatrix with one numerical feature removed.
 
     Args:
         feature_matrix: Original feature matrix
-        feature_to_drop: Name of feature to remove
+        feature_to_drop: Name of numerical feature to remove
 
     Returns:
         New FeatureMatrix without the specified feature
@@ -181,16 +181,18 @@ def drop_feature_from_matrix(
     Raises:
         ValueError: If feature not found
     """
-    if feature_to_drop not in feature_matrix.feature_names:
+    if feature_to_drop not in feature_matrix.numerical_feature_names:
         raise ValueError(f"Feature '{feature_to_drop}' not in matrix")
 
-    idx = feature_matrix.feature_names.index(feature_to_drop)
-    new_features = [f for f in feature_matrix.feature_names if f != feature_to_drop]
-    new_matrix = np.delete(feature_matrix.matrix, idx, axis=1)
+    idx = feature_matrix.numerical_feature_names.index(feature_to_drop)
+    new_features = [f for f in feature_matrix.numerical_feature_names if f != feature_to_drop]
+    new_matrix = np.delete(feature_matrix.numerical_matrix, idx, axis=1)
 
     return FeatureMatrix(
-        matrix=new_matrix,
-        feature_names=new_features,
+        numerical_matrix=new_matrix,
+        categorical_matrix=feature_matrix.categorical_matrix,
+        numerical_feature_names=new_features,
+        categorical_feature_names=feature_matrix.categorical_feature_names,
         customer_ids=feature_matrix.customer_ids,
         scaler=None,  # Scaler no longer valid after dropping
     )
@@ -249,14 +251,14 @@ def run_feature_sensitivity_test(
     drop_results: list[FeatureDropResult] = []
     critical_features: list[str] = []
 
-    # Test each feature
-    for feature_name in features.feature_names:
+    # Test each numerical feature (categorical features handled separately by K-Prototypes)
+    for feature_name in features.numerical_feature_names:
         try:
             # Drop feature and re-cluster
             reduced = drop_feature_from_matrix(features, feature_name)
 
-            # Need at least 1 feature remaining
-            if reduced.matrix.shape[1] < 1:
+            # Need at least 1 numerical feature remaining
+            if reduced.numerical_matrix.shape[1] < 1:
                 continue
 
             reduced_std = standardize_features(reduced)
@@ -274,7 +276,7 @@ def run_feature_sensitivity_test(
                     dropped_feature=feature_name,
                     labels=result.labels,
                     silhouette=result.silhouette,
-                    inertia=result.inertia,
+                    cost=result.cost,
                     cluster_sizes=result.cluster_sizes,
                 )
             )
