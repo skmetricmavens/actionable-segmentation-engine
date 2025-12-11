@@ -3,6 +3,9 @@ Local data loader for parquet sample data.
 
 Converts locally stored parquet files (extracted from BigQuery)
 into EventRecord and CustomerIdHistory objects for the segmentation pipeline.
+
+Supports flexible schema mapping through ClientSchemaConfig for different
+client data structures.
 """
 
 import json
@@ -20,14 +23,43 @@ from src.data.schemas import (
     EventProperties,
     CustomerIdHistory,
 )
+from src.data.field_mapping import (
+    ClientSchemaConfig,
+    EventTypeMapping,
+    extract_field,
+    extract_with_alternatives,
+    is_mobile_device,
+    create_bloomreach_config,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# TABLE TO EVENT TYPE MAPPING
+# EVENT TYPE MAPPING (uses flexible config, with defaults)
 # =============================================================================
 
+# Maps EventTypeMapping enum to internal EventType enum
+CANONICAL_TO_INTERNAL_EVENT_TYPE: dict[EventTypeMapping, EventType] = {
+    EventTypeMapping.PURCHASE: EventType.PURCHASE,
+    EventTypeMapping.PURCHASE_ITEM: EventType.PURCHASE_ITEM,
+    EventTypeMapping.VIEW_ITEM: EventType.VIEW_ITEM,
+    EventTypeMapping.VIEW_CATEGORY: EventType.VIEW_CATEGORY,
+    EventTypeMapping.ADD_TO_CART: EventType.ADD_TO_CART,
+    EventTypeMapping.REMOVE_FROM_CART: EventType.ADD_TO_CART,
+    EventTypeMapping.CHECKOUT: EventType.CHECKOUT,
+    EventTypeMapping.SESSION_START: EventType.SESSION_START,
+    EventTypeMapping.SESSION_END: EventType.SESSION_START,
+    EventTypeMapping.PAGE_VIEW: EventType.VIEW_ITEM,
+    EventTypeMapping.SEARCH: EventType.VIEW_CATEGORY,
+    EventTypeMapping.REFUND: EventType.REFUND,
+    EventTypeMapping.WISHLIST_ADD: EventType.VIEW_ITEM,
+    EventTypeMapping.EMAIL_OPEN: EventType.SESSION_START,
+    EventTypeMapping.EMAIL_CLICK: EventType.VIEW_ITEM,
+    EventTypeMapping.CUSTOM: EventType.VIEW_ITEM,
+}
+
+# Legacy hardcoded mapping (used when no config provided)
 TABLE_TO_EVENT_TYPE: dict[str, EventType] = {
     "purchase": EventType.PURCHASE,
     "purchase_item": EventType.PURCHASE_ITEM,
@@ -37,9 +69,9 @@ TABLE_TO_EVENT_TYPE: dict[str, EventType] = {
     "add_to_cart": EventType.ADD_TO_CART,
     "checkout": EventType.CHECKOUT,
     "session_start": EventType.SESSION_START,
-    "session_end": EventType.SESSION_START,  # Map to session for engagement
-    "page_visit": EventType.VIEW_ITEM,  # Page visits are engagement
-    "search": EventType.VIEW_CATEGORY,  # Search is category exploration
+    "session_end": EventType.SESSION_START,
+    "page_visit": EventType.VIEW_ITEM,
+    "search": EventType.VIEW_CATEGORY,
 }
 
 # Tables that are NOT events (customer data tables)
@@ -85,8 +117,17 @@ class LocalDataLoader:
     Converts parquet files (extracted from BigQuery) into EventRecord
     and CustomerIdHistory objects for use with the segmentation pipeline.
 
+    Supports flexible schema mapping through ClientSchemaConfig for different
+    client data structures (Bloomreach, GA4, Segment, custom, etc.).
+
     Usage:
+        # Default (auto-detect Bloomreach-style data)
         loader = LocalDataLoader("data/samples")
+        result = loader.load()
+
+        # With custom schema config
+        from src.data.field_mapping import create_ga4_config
+        loader = LocalDataLoader("data/samples", schema_config=create_ga4_config())
         result = loader.load()
 
         # Use with pipeline
@@ -101,6 +142,7 @@ class LocalDataLoader:
         self,
         data_dir: str | Path,
         *,
+        schema_config: ClientSchemaConfig | None = None,
         include_tables: list[str] | None = None,
         exclude_tables: list[str] | None = None,
     ):
@@ -109,10 +151,13 @@ class LocalDataLoader:
 
         Args:
             data_dir: Directory containing parquet files
+            schema_config: Client schema configuration for flexible field mapping.
+                          If None, uses default Bloomreach-style config.
             include_tables: Only load these tables (default: all)
             exclude_tables: Skip these tables
         """
         self.data_dir = Path(data_dir)
+        self.schema_config = schema_config or create_bloomreach_config()
         self.include_tables = set(include_tables) if include_tables else None
         self.exclude_tables = set(exclude_tables) if exclude_tables else set()
         self._pandas_module: Any = None
@@ -238,10 +283,11 @@ class LocalDataLoader:
         event_type: EventType,
     ) -> EventRecord | None:
         """Convert a single row to EventRecord."""
+        config = self.schema_config
 
-        # Get required fields
-        customer_id = row.get("internal_customer_id")
-        timestamp = row.get("timestamp")
+        # Get required fields using config
+        customer_id = row.get(config.customer_id_field)
+        timestamp = row.get(config.timestamp_field)
 
         if not customer_id or timestamp is None:
             return None
@@ -257,7 +303,12 @@ class LocalDataLoader:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
 
         # Get properties (nested dict from BigQuery)
-        props = row.get("properties", {})
+        props_field = config.properties_field
+        if props_field:
+            props = row.get(props_field, {})
+        else:
+            # Flat structure - use entire row as dict
+            props = dict(row)
         if props is None:
             props = {}
 
@@ -277,7 +328,8 @@ class LocalDataLoader:
         props: dict[str, Any],
         event_type: EventType,
     ) -> EventProperties:
-        """Build EventProperties from raw properties dict."""
+        """Build EventProperties from raw properties dict using flexible config."""
+        config = self.schema_config
 
         # Helper to safely get value (handles numpy types)
         def safe_get(key: str, *alt_keys: str) -> Any:
@@ -290,23 +342,23 @@ class LocalDataLoader:
                     return val
             return None
 
-        # Extract common fields
-        product_id = safe_get("product_id")
-        product_name = safe_get("title", "product_name")
-        product_category = safe_get("category_level_1", "product_category", "category")
+        # Use config's category_fields for flexible category extraction
+        product_id = safe_get("product_id", "item_id", "sku")
+        product_name = safe_get("title", "product_name", "item_name", "name")
+        product_category = extract_with_alternatives(props, config.category_fields)
 
         # Price handling
         product_price = None
-        price_val = safe_get("price", "product_price")
+        price_val = safe_get("price", "product_price", "item_price", "unit_price")
         if price_val is not None:
             try:
                 product_price = Decimal(str(price_val))
             except (ValueError, TypeError):
                 pass
 
-        # Order total for purchase events
+        # Order total using config's revenue_fields
         order_total = None
-        total_val = safe_get("total_price", "order_total")
+        total_val = extract_with_alternatives(props, config.revenue_fields)
         if total_val is not None:
             try:
                 order_total = Decimal(str(total_val))
@@ -315,39 +367,52 @@ class LocalDataLoader:
 
         # Quantity
         quantity = None
-        qty_val = safe_get("quantity", "total_quantity")
+        qty_val = safe_get("quantity", "total_quantity", "qty", "item_quantity")
         if qty_val is not None:
             try:
                 quantity = int(float(qty_val))
             except (ValueError, TypeError):
                 pass
 
-        # Device/channel
-        device_type = safe_get("device", "device_type", "channel")
+        # Device/channel - normalize mobile detection
+        device_type = safe_get("device", "device_type", "channel", "platform")
+        # Optional: normalize to "mobile" or "desktop" for consistency
+        if device_type and is_mobile_device(str(device_type), config.mobile_device_values):
+            device_type = f"{device_type}"  # Keep original but we know it's mobile
 
         # Search query
-        search_query = safe_get("query", "search_query")
+        search_query = safe_get("query", "search_query", "search_term", "keyword")
 
         # Page info
-        page_url = safe_get("page_url", "url")
-        page_title = safe_get("page_title", "title")
+        page_url = safe_get("page_url", "url", "page_location")
+        page_title = safe_get("page_title", "title", "page_name")
 
         # Order ID for purchases
-        order_id = safe_get("purchase_id", "order_id")
+        order_id = safe_get("purchase_id", "order_id", "transaction_id", "order_number")
 
         # Session ID
-        session_id = safe_get("session_id")
+        session_id = safe_get("session_id", "session", "visit_id")
 
         # Build custom properties for anything else
+        # Extended list to handle more variations
         known_fields = {
-            "product_id", "title", "product_name", "category_level_1",
-            "product_category", "category", "price", "product_price",
-            "total_price", "order_total", "quantity", "total_quantity",
-            "device", "device_type", "channel", "query", "search_query",
-            "page_url", "url", "page_title", "purchase_id", "order_id",
-            "session_id", "browser", "os", "location", "timestamp",
-            "ingest_timestamp", "type", "internal_customer_id",
+            "product_id", "item_id", "sku",
+            "title", "product_name", "item_name", "name",
+            "price", "product_price", "item_price", "unit_price",
+            "quantity", "total_quantity", "qty", "item_quantity",
+            "device", "device_type", "channel", "platform",
+            "query", "search_query", "search_term", "keyword",
+            "page_url", "url", "page_location",
+            "page_title", "page_name",
+            "purchase_id", "order_id", "transaction_id", "order_number",
+            "session_id", "session", "visit_id",
+            "browser", "os", "location", "timestamp",
+            "ingest_timestamp", "type",
+            config.customer_id_field,
         }
+        # Add revenue and category fields
+        known_fields.update(config.revenue_fields)
+        known_fields.update(config.category_fields)
 
         custom = {
             k: v for k, v in props.items()
@@ -376,11 +441,13 @@ class LocalDataLoader:
         seen: set[str],
     ) -> list[CustomerIdHistory]:
         """Load CustomerIdHistory from customers_id_history table."""
+        config = self.schema_config
         id_history: list[CustomerIdHistory] = []
 
         for _, row in df.iterrows():
-            current_id = row.get("internal_customer_id")
-            past_id = row.get("past_id")
+            # Use config fields for flexible field access
+            current_id = row.get(config.canonical_id_field)
+            past_id = row.get(config.past_id_field)
 
             if current_id and past_id:
                 past_id_str = str(past_id)
@@ -403,13 +470,15 @@ class LocalDataLoader:
         seen: set[str] | None = None,
     ) -> list[CustomerIdHistory]:
         """Load CustomerIdHistory from merge events table."""
+        config = self.schema_config
         id_history: list[CustomerIdHistory] = []
         if seen is None:
             seen = set()
 
         for _, row in df.iterrows():
-            current_id = row.get("internal_customer_id")
-            props = row.get("properties", {})
+            current_id = row.get(config.canonical_id_field)
+            props_field = config.properties_field
+            props = row.get(props_field, {}) if props_field else dict(row)
 
             if not current_id or not props:
                 continue
@@ -500,32 +569,45 @@ class LocalDataLoader:
 
 def load_local_data(
     data_dir: str | Path = "data/samples",
+    *,
+    schema_config: ClientSchemaConfig | None = None,
 ) -> LoadResult:
     """
     Load sample data from local parquet files.
 
     Args:
         data_dir: Directory containing parquet files
+        schema_config: Optional client schema configuration for flexible field mapping.
+                      Use create_ga4_config(), create_segment_config(), etc. for
+                      different data sources.
 
     Returns:
         LoadResult with events, id_history, and statistics
 
     Example:
+        # Default (Bloomreach-style data)
         result = load_local_data("data/samples")
         print(f"Loaded {len(result.events)} events")
+
+        # Google Analytics 4 data
+        from src.data.field_mapping import create_ga4_config
+        result = load_local_data("data/ga4_export", schema_config=create_ga4_config())
     """
-    loader = LocalDataLoader(data_dir)
+    loader = LocalDataLoader(data_dir, schema_config=schema_config)
     return loader.load()
 
 
 def load_events_only(
     data_dir: str | Path = "data/samples",
+    *,
+    schema_config: ClientSchemaConfig | None = None,
 ) -> tuple[list[EventRecord], list[CustomerIdHistory]]:
     """
     Load just events and ID history for pipeline use.
 
     Args:
         data_dir: Directory containing parquet files
+        schema_config: Optional client schema configuration
 
     Returns:
         Tuple of (events, id_history)
@@ -536,5 +618,5 @@ def load_events_only(
         from src.pipeline import run_pipeline
         result = run_pipeline(events=events, id_history=id_history)
     """
-    result = load_local_data(data_dir)
+    result = load_local_data(data_dir, schema_config=schema_config)
     return result.events, result.id_history
