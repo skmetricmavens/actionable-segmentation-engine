@@ -353,7 +353,8 @@ class LocalDataLoader:
         if price_val is not None:
             try:
                 product_price = Decimal(str(price_val))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, ArithmeticError):
+                # ArithmeticError catches decimal.InvalidOperation
                 pass
 
         # Order total using config's revenue_fields
@@ -362,7 +363,8 @@ class LocalDataLoader:
         if total_val is not None:
             try:
                 order_total = Decimal(str(total_val))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, ArithmeticError):
+                # ArithmeticError catches decimal.InvalidOperation
                 pass
 
         # Quantity
