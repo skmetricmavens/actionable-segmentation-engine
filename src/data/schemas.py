@@ -109,10 +109,19 @@ class EventProperties(BaseSchema):
     # Purchase-specific
     order_id: str | None = None
     total_amount: Decimal | None = None
+    order_total: Decimal | None = None  # Alternative name for total_amount
     discount_amount: Decimal | None = None
     currency: str | None = None
 
+    # Page/view-specific
+    page_url: str | None = None
+    page_title: str | None = None
+
+    # Search-specific
+    search_query: str | None = None
+
     # Session-specific
+    session_id: str | None = None
     device_type: str | None = None
     browser: str | None = None
     referrer: str | None = None
@@ -122,6 +131,7 @@ class EventProperties(BaseSchema):
 
     # Custom properties (extensible)
     extra: dict[str, Any] = Field(default_factory=dict)
+    custom_properties: dict[str, Any] | None = None  # For BQ adapter overflow
 
 
 class EventRecord(BaseSchema):

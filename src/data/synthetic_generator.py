@@ -316,6 +316,7 @@ class SyntheticDataGenerator:
         timestamp: datetime,
         total_amount: Decimal,
         discount_amount: Decimal | None = None,
+        order_id: str | None = None,
     ) -> EventRecord:
         """Generate a purchase event."""
         return EventRecord(
@@ -324,10 +325,38 @@ class SyntheticDataGenerator:
             event_type=EventType.PURCHASE,
             timestamp=timestamp,
             properties=EventProperties(
-                order_id=f"order_{self.rng.integers(100000, 999999)}",
+                order_id=order_id or f"order_{self.rng.integers(100000, 999999)}",
                 total_amount=total_amount,
                 discount_amount=discount_amount,
                 currency="USD",
+            ),
+        )
+
+    def _generate_purchase_item(
+        self,
+        *,
+        customer_id: str,
+        timestamp: datetime,
+        order_id: str,
+        product_id: str,
+        product_name: str,
+        category: str,
+        price: Decimal,
+        quantity: int = 1,
+    ) -> EventRecord:
+        """Generate a purchase_item event for category-level purchase tracking."""
+        return EventRecord(
+            event_id=self._generate_event_id(),
+            internal_customer_id=customer_id,
+            event_type=EventType.PURCHASE_ITEM,
+            timestamp=timestamp,
+            properties=EventProperties(
+                order_id=order_id,
+                product_id=product_id,
+                product_name=product_name,
+                product_category=category,
+                product_price=price,
+                quantity=quantity,
             ),
         )
 
@@ -484,18 +513,33 @@ class SyntheticDataGenerator:
                 elif behavior_type == CustomerBehaviorType.FREQUENT_LOW_VALUE:
                     total = total * Decimal("0.5")  # Lower value orders
 
+                order_id = f"order_{self.rng.integers(100000, 999999)}"
+
                 purchase_event = self._generate_purchase(
                     customer_id=customer_id,
                     timestamp=purchase_ts,
                     total_amount=total.quantize(Decimal("0.01")),
                     discount_amount=discount.quantize(Decimal("0.01")) if discount else None,
+                    order_id=order_id,
                 )
                 events.append(purchase_event)
 
-                order_id = purchase_event.properties.order_id
-                if order_id:
-                    order_ids.append(order_id)
-                    order_amounts.append(total)
+                # Generate purchase_item events for each cart item (for category tracking)
+                for item_id, item_name, item_category, item_price in cart_items:
+                    events.append(
+                        self._generate_purchase_item(
+                            customer_id=customer_id,
+                            timestamp=purchase_ts + timedelta(seconds=1),
+                            order_id=order_id,
+                            product_id=item_id,
+                            product_name=item_name,
+                            category=item_category,
+                            price=item_price,
+                        )
+                    )
+
+                order_ids.append(order_id)
+                order_amounts.append(total)
 
         # Add refunds for refund-heavy customers
         if behavior_type == CustomerBehaviorType.REFUND_HEAVY and order_ids:
