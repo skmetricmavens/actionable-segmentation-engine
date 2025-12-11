@@ -347,6 +347,170 @@ def find_optimal_k(
     }
 
 
+def _extract_segment_traits(
+    profiles: list[CustomerProfile],
+) -> tuple[list[str], dict[str, Any]]:
+    """
+    Extract defining traits and trait summary from cluster profiles.
+
+    Analyzes category affinities, behavioral patterns, and value metrics
+    to generate human-readable traits that describe the segment.
+
+    Args:
+        profiles: List of customer profiles in the segment
+
+    Returns:
+        Tuple of (defining_traits list, trait_summary dict)
+    """
+    from collections import Counter
+
+    defining_traits: list[str] = []
+    trait_summary: dict[str, Any] = {}
+
+    if not profiles:
+        return defining_traits, trait_summary
+
+    n_profiles = len(profiles)
+
+    # 1. Category affinity analysis
+    category_counts: Counter[str] = Counter()
+    category_engagement: dict[str, float] = {}
+
+    for profile in profiles:
+        if profile.top_category:
+            category_counts[profile.top_category] += 1
+
+        for affinity in profile.category_affinities:
+            if affinity.category not in category_engagement:
+                category_engagement[affinity.category] = 0.0
+            category_engagement[affinity.category] += affinity.engagement_score
+
+    # Top categories by customer count
+    top_categories = category_counts.most_common(3)
+    if top_categories:
+        top_cat, top_count = top_categories[0]
+        pct = (top_count / n_profiles) * 100
+        if pct >= 30:
+            defining_traits.append(f"Strong {top_cat} affinity ({pct:.0f}%)")
+        elif pct >= 15:
+            defining_traits.append(f"Moderate {top_cat} interest ({pct:.0f}%)")
+
+        trait_summary["top_categories"] = [
+            {"category": cat, "customer_count": cnt, "percentage": round(cnt / n_profiles * 100, 1)}
+            for cat, cnt in top_categories
+        ]
+
+    # 2. Value-based traits
+    avg_clv = sum(float(p.clv_estimate) for p in profiles) / n_profiles
+    avg_aov = sum(float(p.avg_order_value) for p in profiles) / n_profiles
+    avg_purchases = sum(p.total_purchases for p in profiles) / n_profiles
+    avg_purchase_freq = sum(p.purchase_frequency_per_month for p in profiles) / n_profiles
+
+    # Classify value tier
+    if avg_clv >= 50000:
+        defining_traits.append("Premium high-value customers")
+    elif avg_clv >= 10000:
+        defining_traits.append("High-value customers")
+    elif avg_clv >= 1000:
+        defining_traits.append("Mid-value customers")
+    else:
+        defining_traits.append("Entry-level value customers")
+
+    trait_summary["value_metrics"] = {
+        "avg_clv": round(avg_clv, 2),
+        "avg_order_value": round(avg_aov, 2),
+        "avg_total_purchases": round(avg_purchases, 1),
+        "avg_purchase_frequency_monthly": round(avg_purchase_freq, 2),
+    }
+
+    # 3. Engagement-based traits
+    avg_sessions = sum(p.total_sessions for p in profiles) / n_profiles
+    avg_page_views = sum(p.total_page_views for p in profiles) / n_profiles
+    avg_cart_abandon = sum(p.cart_abandonment_rate for p in profiles) / n_profiles
+
+    if avg_sessions >= 20:
+        defining_traits.append("Highly engaged browsers")
+    elif avg_sessions >= 10:
+        defining_traits.append("Moderately engaged")
+    else:
+        defining_traits.append("Low engagement")
+
+    if avg_cart_abandon >= 0.7:
+        defining_traits.append("High cart abandonment risk")
+    elif avg_cart_abandon <= 0.2:
+        defining_traits.append("Strong purchase completion")
+
+    trait_summary["engagement_metrics"] = {
+        "avg_sessions": round(avg_sessions, 1),
+        "avg_page_views": round(avg_page_views, 1),
+        "avg_cart_abandonment_rate": round(avg_cart_abandon, 2),
+    }
+
+    # 4. Churn risk analysis
+    avg_churn_risk = sum(p.churn_risk_score for p in profiles) / n_profiles
+    if avg_churn_risk >= 0.7:
+        defining_traits.append("At-risk of churning")
+    elif avg_churn_risk <= 0.3:
+        defining_traits.append("Loyal customer base")
+
+    trait_summary["churn_risk"] = {
+        "avg_churn_score": round(avg_churn_risk, 2),
+        "high_risk_count": sum(1 for p in profiles if p.churn_risk_score >= 0.7),
+        "low_risk_count": sum(1 for p in profiles if p.churn_risk_score <= 0.3),
+    }
+
+    # 5. Device preference
+    avg_mobile_ratio = sum(p.mobile_session_ratio for p in profiles) / n_profiles
+    if avg_mobile_ratio >= 0.7:
+        defining_traits.append("Mobile-first shoppers")
+    elif avg_mobile_ratio <= 0.3:
+        defining_traits.append("Desktop-preferred shoppers")
+    else:
+        defining_traits.append("Multi-device shoppers")
+
+    trait_summary["device_preference"] = {
+        "avg_mobile_ratio": round(avg_mobile_ratio, 2),
+    }
+
+    # 6. Temporal patterns
+    preferred_days = [p.preferred_day_of_week for p in profiles if p.preferred_day_of_week is not None]
+    preferred_hours = [p.preferred_hour_of_day for p in profiles if p.preferred_hour_of_day is not None]
+
+    if preferred_days:
+        day_counts = Counter(preferred_days)
+        most_common_day = day_counts.most_common(1)[0][0]
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        if most_common_day < len(day_names):
+            if most_common_day >= 5:  # Weekend
+                defining_traits.append("Weekend shoppers")
+            else:
+                defining_traits.append(f"{day_names[most_common_day]} peak activity")
+
+        trait_summary["temporal_patterns"] = {
+            "preferred_day": most_common_day,
+            "day_distribution": dict(day_counts),
+        }
+
+    if preferred_hours:
+        hour_counts = Counter(preferred_hours)
+        most_common_hour = hour_counts.most_common(1)[0][0]
+        if 6 <= most_common_hour < 12:
+            defining_traits.append("Morning shoppers")
+        elif 12 <= most_common_hour < 17:
+            defining_traits.append("Afternoon shoppers")
+        elif 17 <= most_common_hour < 21:
+            defining_traits.append("Evening shoppers")
+        else:
+            defining_traits.append("Late-night shoppers")
+
+        if "temporal_patterns" not in trait_summary:
+            trait_summary["temporal_patterns"] = {}
+        trait_summary["temporal_patterns"]["preferred_hour"] = most_common_hour
+        trait_summary["temporal_patterns"]["hour_distribution"] = dict(hour_counts)
+
+    return defining_traits, trait_summary
+
+
 def create_segments_from_clusters(
     profiles: list[CustomerProfile],
     clustering_result: ClusteringResult,
@@ -395,6 +559,9 @@ def create_segments_from_clusters(
             (p.avg_order_value for p in profiles_in_cluster), Decimal("0")
         ) / len(profiles_in_cluster)
 
+        # Extract defining traits from profiles
+        defining_traits, trait_summary = _extract_segment_traits(profiles_in_cluster)
+
         # Create members
         members = [
             SegmentMember(
@@ -407,10 +574,19 @@ def create_segments_from_clusters(
         # Get centroid as list
         centroid = clustering_result.centroids[cluster_id].tolist()
 
+        # Generate descriptive name based on traits
+        segment_name = f"Cluster {cluster_id}"
+        if defining_traits:
+            # Use first two distinctive traits for naming
+            name_traits = [t for t in defining_traits[:2] if "customer" not in t.lower()]
+            if name_traits:
+                segment_name = f"{name_traits[0]}"
+
         segment = Segment(
             segment_id=f"{segment_id_prefix}_{cluster_id}",
-            name=f"Cluster {cluster_id}",
-            description=f"Auto-generated cluster with {len(profiles_in_cluster)} customers",
+            name=segment_name,
+            description=f"Auto-generated cluster with {len(profiles_in_cluster)} customers. " +
+                       ", ".join(defining_traits[:3]) if defining_traits else f"Auto-generated cluster with {len(profiles_in_cluster)} customers",
             members=members,
             size=len(profiles_in_cluster),
             total_clv=total_clv,
@@ -418,6 +594,8 @@ def create_segments_from_clusters(
             avg_order_value=avg_aov,
             cluster_label=cluster_id,
             centroid=centroid,
+            defining_traits=defining_traits,
+            trait_summary=trait_summary,
         )
 
         segments.append(segment)
