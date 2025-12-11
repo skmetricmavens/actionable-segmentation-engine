@@ -76,6 +76,11 @@ from src.segmentation.sensitivity import (
     SensitivityAnalysisResult,
     get_sensitivity_summary,
 )
+from src.analysis.integrated_analysis import (
+    IntegratedAnalyzer,
+    IntegratedAnalysisResult,
+    format_integrated_report,
+)
 
 
 # =============================================================================
@@ -116,6 +121,7 @@ class PipelineConfig:
 
     # Output options
     generate_report: bool = True
+    run_integrated_analysis: bool = True
     verbose: bool = False
 
 
@@ -151,8 +157,11 @@ class PipelineResult:
     # Report
     report: SegmentationReport | None
 
-    # Metadata
+    # Metadata (required field before optional ones)
     config: PipelineConfig
+
+    # Fields with defaults must come last
+    integrated_analysis: IntegratedAnalysisResult | None = None
     stage_results: list[PipelineStageResult] = field(default_factory=list)
     total_duration_ms: float = 0.0
     success: bool = True
@@ -528,6 +537,39 @@ def run_pipeline(
             stage.metrics = {"n_segment_reports": len(report.segments) if report else 0}
             stage_results.append(stage)
 
+        # Stage 11: Integrated Analysis (final usable segments with whitespace)
+        integrated_analysis: IntegratedAnalysisResult | None = None
+        if config.run_integrated_analysis:
+            def run_integrated() -> IntegratedAnalysisResult:
+                analyzer = IntegratedAnalyzer(
+                    require_valid=True,
+                    require_actionable=True,
+                    require_robustness=config.run_sensitivity,
+                    min_robustness=0.3,
+                    include_whitespace=True,
+                )
+                return analyzer.analyze(
+                    profiles=profiles,
+                    segments=segments,
+                    validation_results=validation_results,
+                    robustness_scores=robustness_scores,
+                    viabilities=viabilities,
+                    actionability_evaluations=actionability_evaluations,
+                    explanations=explanations,
+                )
+
+            integrated_analysis, stage = _time_stage(
+                "Integrated Analysis",
+                run_integrated,
+                config.verbose,
+            )
+            stage.metrics = {
+                "usable_segments": integrated_analysis.total_usable,
+                "rejected_segments": len(integrated_analysis.rejected_segments),
+                "total_whitespace_value": float(integrated_analysis.total_whitespace_opportunity),
+            }
+            stage_results.append(stage)
+
         # Calculate total duration
         total_duration = (time.perf_counter() - start_time) * 1000
 
@@ -543,6 +585,7 @@ def run_pipeline(
             sensitivity_result=sensitivity_result,
             validation_results=validation_results,
             report=report,
+            integrated_analysis=integrated_analysis,
             config=config,
             stage_results=stage_results,
             total_duration_ms=total_duration,
@@ -720,6 +763,17 @@ def format_pipeline_summary(result: PipelineResult) -> str:
             f"  - Overall: {result.sensitivity_result.overall_robustness:.3f}",
             f"  - Feature stability: {result.sensitivity_result.feature_sensitivity.feature_stability:.3f}",
             f"  - Time consistency: {result.sensitivity_result.time_window_sensitivity.time_consistency:.3f}",
+            "",
+        ])
+
+    if result.integrated_analysis:
+        ia = result.integrated_analysis
+        lines.extend([
+            "INTEGRATED ANALYSIS:",
+            f"  - Usable segments: {ia.total_usable} / {ia.total_segments}",
+            f"  - Customers covered: {ia.customers_in_usable_segments:,} ({ia.customers_in_usable_segments / ia.total_customers * 100:.1f}%)" if ia.total_customers > 0 else "  - Customers covered: 0",
+            f"  - Total CLV (usable): ${float(ia.total_segment_clv):,.2f}",
+            f"  - Whitespace opportunity: ${float(ia.total_whitespace_opportunity):,.2f}",
             "",
         ])
 
