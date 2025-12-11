@@ -4,6 +4,7 @@ pandas>=2.0
 numpy>=1.24
 scikit-learn>=1.3
 scipy>=1.11
+kmodes>=0.12  # K-Prototypes for mixed data clustering
 
 # BigQuery (for future real data integration)
 google-cloud-bigquery>=3.11

@@ -3,8 +3,9 @@ Module: clusterer
 
 Purpose: ML-based customer clustering for segmentation.
 
-Uses scikit-learn for clustering with deterministic seeding.
-Produces segment candidates that can be evaluated by LLM for actionability.
+Uses K-Prototypes for mixed data clustering (continuous + categorical features).
+K-Prototypes combines K-Means (Euclidean distance for numerical) with K-Modes
+(matching dissimilarity for categorical) to handle real-world customer data.
 """
 
 from dataclasses import dataclass, field
@@ -13,7 +14,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from sklearn.cluster import KMeans
+from kmodes.kprototypes import KPrototypes
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 
@@ -30,48 +31,71 @@ class ClusteringResult:
     """Container for clustering results."""
 
     labels: NDArray[np.int64]
-    centroids: NDArray[np.float64]
-    inertia: float
+    centroids: NDArray[np.float64]  # Numerical centroids
+    categorical_centroids: list[list[str]]  # Categorical modes
+    cost: float  # K-Prototypes cost (replaces inertia)
     silhouette: float | None
     n_clusters: int
     n_samples: int
     feature_names: list[str]
+    categorical_feature_names: list[str]
 
     # Cluster-level statistics
     cluster_sizes: dict[int, int] = field(default_factory=dict)
-    cluster_stats: dict[int, dict[str, float]] = field(default_factory=dict)
+    cluster_stats: dict[int, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
-class FeatureMatrix:
-    """Container for feature extraction results."""
+class MixedFeatureMatrix:
+    """Container for mixed feature extraction results (numerical + categorical)."""
 
-    matrix: NDArray[np.float64]
-    feature_names: list[str]
+    numerical_matrix: NDArray[np.float64]
+    categorical_matrix: NDArray[np.object_]
+    numerical_feature_names: list[str]
+    categorical_feature_names: list[str]
     customer_ids: list[str]
     scaler: StandardScaler | None = None
 
+    @property
+    def combined_matrix(self) -> NDArray[np.object_]:
+        """Return combined matrix with numerical first, then categorical."""
+        return np.column_stack([self.numerical_matrix, self.categorical_matrix])
 
-def extract_features(
+    @property
+    def categorical_indices(self) -> list[int]:
+        """Return indices of categorical columns in combined matrix."""
+        n_numerical = self.numerical_matrix.shape[1]
+        n_categorical = self.categorical_matrix.shape[1]
+        return list(range(n_numerical, n_numerical + n_categorical))
+
+    @property
+    def all_feature_names(self) -> list[str]:
+        """Return all feature names."""
+        return self.numerical_feature_names + self.categorical_feature_names
+
+
+def extract_mixed_features(
     profiles: list[CustomerProfile],
     *,
     include_value_features: bool = True,
     include_engagement_features: bool = True,
     include_temporal_features: bool = True,
     include_channel_features: bool = True,
-) -> FeatureMatrix:
+    include_category_features: bool = True,
+) -> MixedFeatureMatrix:
     """
-    Extract numerical features from customer profiles for clustering.
+    Extract mixed features (numerical + categorical) from customer profiles.
 
     Args:
         profiles: List of customer profiles
-        include_value_features: Include revenue/CLV features
-        include_engagement_features: Include session/view features
-        include_temporal_features: Include day/hour features
-        include_channel_features: Include device features
+        include_value_features: Include revenue/CLV features (numerical)
+        include_engagement_features: Include session/view features (numerical)
+        include_temporal_features: Include day/hour features (categorical - cyclic)
+        include_channel_features: Include device features (categorical)
+        include_category_features: Include product category features (categorical)
 
     Returns:
-        FeatureMatrix with extracted features
+        MixedFeatureMatrix with both numerical and categorical features
 
     Raises:
         InsufficientDataError: If no profiles provided
@@ -84,18 +108,25 @@ def extract_features(
             data_type="profiles",
         )
 
-    feature_names: list[str] = []
+    numerical_feature_names: list[str] = []
+    categorical_feature_names: list[str] = []
     customer_ids: list[str] = []
-    feature_rows: list[list[float]] = []
+    numerical_rows: list[list[float]] = []
+    categorical_rows: list[list[str]] = []
 
     for profile in profiles:
         customer_ids.append(profile.internal_customer_id)
-        row: list[float] = []
+        num_row: list[float] = []
+        cat_row: list[str] = []
 
-        # Value features
+        # =================================================================
+        # NUMERICAL FEATURES
+        # =================================================================
+
+        # Value features (numerical)
         if include_value_features:
-            if "total_revenue" not in feature_names:
-                feature_names.extend([
+            if "total_revenue" not in numerical_feature_names:
+                numerical_feature_names.extend([
                     "total_revenue",
                     "avg_order_value",
                     "clv_estimate",
@@ -104,7 +135,7 @@ def extract_features(
                     "churn_risk",
                 ])
 
-            row.extend([
+            num_row.extend([
                 float(profile.total_revenue),
                 float(profile.avg_order_value),
                 float(profile.clv_estimate),
@@ -113,101 +144,204 @@ def extract_features(
                 profile.churn_risk_score,
             ])
 
-        # Engagement features
+        # Engagement features (numerical)
         if include_engagement_features:
-            if "total_sessions" not in feature_names:
-                feature_names.extend([
+            if "total_sessions" not in numerical_feature_names:
+                numerical_feature_names.extend([
                     "total_sessions",
                     "total_page_views",
                     "total_items_viewed",
                     "cart_abandonment_rate",
                 ])
 
-            row.extend([
+            num_row.extend([
                 float(profile.total_sessions),
                 float(profile.total_page_views),
                 float(profile.total_items_viewed),
                 profile.cart_abandonment_rate,
             ])
 
-        # Temporal features
+        # Mobile ratio (numerical - but could be treated as category too)
+        if include_channel_features:
+            if "mobile_ratio" not in numerical_feature_names:
+                numerical_feature_names.append("mobile_ratio")
+            num_row.append(profile.mobile_session_ratio)
+
+        # =================================================================
+        # CATEGORICAL FEATURES
+        # =================================================================
+
+        # Temporal features as categorical (cyclic data - not linear!)
         if include_temporal_features:
-            if "preferred_day" not in feature_names:
-                feature_names.extend([
-                    "preferred_day",
-                    "preferred_hour",
+            if "preferred_day_part" not in categorical_feature_names:
+                categorical_feature_names.extend([
+                    "preferred_day_part",  # weekday/weekend
+                    "preferred_time_slot",  # morning/afternoon/evening/night
                 ])
 
-            # Use -1 for missing temporal data
-            day = profile.preferred_day_of_week if profile.preferred_day_of_week is not None else -1
-            hour = profile.preferred_hour_of_day if profile.preferred_hour_of_day is not None else -1
+            # Convert day to weekday/weekend (treats cyclic nature properly)
+            day = profile.preferred_day_of_week
+            if day is not None:
+                day_part = "weekend" if day >= 5 else "weekday"
+            else:
+                day_part = "unknown"
 
-            row.extend([float(day), float(hour)])
+            # Convert hour to time slot
+            hour = profile.preferred_hour_of_day
+            if hour is not None:
+                if 6 <= hour < 12:
+                    time_slot = "morning"
+                elif 12 <= hour < 17:
+                    time_slot = "afternoon"
+                elif 17 <= hour < 21:
+                    time_slot = "evening"
+                else:
+                    time_slot = "night"
+            else:
+                time_slot = "unknown"
 
-        # Channel features
+            cat_row.extend([day_part, time_slot])
+
+        # Device type as categorical
         if include_channel_features:
-            if "mobile_ratio" not in feature_names:
-                feature_names.append("mobile_ratio")
+            if "device_preference" not in categorical_feature_names:
+                categorical_feature_names.append("device_preference")
 
-            row.append(profile.mobile_session_ratio)
+            # Categorize mobile ratio
+            mobile_ratio = profile.mobile_session_ratio
+            if mobile_ratio >= 0.7:
+                device_pref = "mobile_first"
+            elif mobile_ratio <= 0.3:
+                device_pref = "desktop_first"
+            else:
+                device_pref = "multi_device"
 
-        feature_rows.append(row)
+            cat_row.append(device_pref)
 
-    matrix = np.array(feature_rows, dtype=np.float64)
+        # Product category affinity as categorical
+        if include_category_features:
+            if "top_category" not in categorical_feature_names:
+                categorical_feature_names.append("top_category")
 
-    return FeatureMatrix(
-        matrix=matrix,
-        feature_names=feature_names,
+            top_cat = profile.top_category if profile.top_category else "none"
+            cat_row.append(top_cat)
+
+        # Value tier as categorical (derived from CLV)
+        if include_value_features:
+            if "value_tier" not in categorical_feature_names:
+                categorical_feature_names.append("value_tier")
+
+            clv = float(profile.clv_estimate)
+            if clv >= 50000:
+                value_tier = "premium"
+            elif clv >= 10000:
+                value_tier = "high"
+            elif clv >= 1000:
+                value_tier = "mid"
+            else:
+                value_tier = "entry"
+
+            cat_row.append(value_tier)
+
+        # Engagement tier as categorical
+        if include_engagement_features:
+            if "engagement_tier" not in categorical_feature_names:
+                categorical_feature_names.append("engagement_tier")
+
+            sessions = profile.total_sessions
+            if sessions >= 20:
+                engagement_tier = "high"
+            elif sessions >= 10:
+                engagement_tier = "medium"
+            else:
+                engagement_tier = "low"
+
+            cat_row.append(engagement_tier)
+
+        # Churn risk tier as categorical
+        if include_value_features:
+            if "churn_risk_tier" not in categorical_feature_names:
+                categorical_feature_names.append("churn_risk_tier")
+
+            churn = profile.churn_risk_score
+            if churn >= 0.7:
+                churn_tier = "high_risk"
+            elif churn >= 0.4:
+                churn_tier = "medium_risk"
+            else:
+                churn_tier = "low_risk"
+
+            cat_row.append(churn_tier)
+
+        numerical_rows.append(num_row)
+        categorical_rows.append(cat_row)
+
+    numerical_matrix = np.array(numerical_rows, dtype=np.float64)
+    categorical_matrix = np.array(categorical_rows, dtype=object)
+
+    return MixedFeatureMatrix(
+        numerical_matrix=numerical_matrix,
+        categorical_matrix=categorical_matrix,
+        numerical_feature_names=numerical_feature_names,
+        categorical_feature_names=categorical_feature_names,
         customer_ids=customer_ids,
     )
 
 
-def standardize_features(
-    feature_matrix: FeatureMatrix,
+def standardize_numerical_features(
+    feature_matrix: MixedFeatureMatrix,
     *,
     scaler: StandardScaler | None = None,
-) -> FeatureMatrix:
+) -> MixedFeatureMatrix:
     """
-    Standardize features using StandardScaler.
+    Standardize only the numerical features using StandardScaler.
 
     Args:
-        feature_matrix: FeatureMatrix to standardize
+        feature_matrix: MixedFeatureMatrix to standardize
         scaler: Optional pre-fitted scaler (for applying to new data)
 
     Returns:
-        New FeatureMatrix with standardized values
+        New MixedFeatureMatrix with standardized numerical values
     """
     if scaler is None:
         scaler = StandardScaler()
-        standardized = scaler.fit_transform(feature_matrix.matrix)
+        standardized = scaler.fit_transform(feature_matrix.numerical_matrix)
     else:
-        standardized = scaler.transform(feature_matrix.matrix)
+        standardized = scaler.transform(feature_matrix.numerical_matrix)
 
-    return FeatureMatrix(
-        matrix=standardized,
-        feature_names=feature_matrix.feature_names,
+    return MixedFeatureMatrix(
+        numerical_matrix=standardized,
+        categorical_matrix=feature_matrix.categorical_matrix,
+        numerical_feature_names=feature_matrix.numerical_feature_names,
+        categorical_feature_names=feature_matrix.categorical_feature_names,
         customer_ids=feature_matrix.customer_ids,
         scaler=scaler,
     )
 
 
 def cluster_customers(
-    feature_matrix: FeatureMatrix,
+    feature_matrix: MixedFeatureMatrix,
     *,
     n_clusters: int = 5,
     random_seed: int = 42,
-    max_iter: int = 300,
+    max_iter: int = 100,
     n_init: int = 10,
+    gamma: float | None = None,
 ) -> ClusteringResult:
     """
-    Perform KMeans clustering on customer features.
+    Perform K-Prototypes clustering on mixed customer features.
+
+    K-Prototypes handles both numerical and categorical features properly:
+    - Numerical: Euclidean distance (like K-Means)
+    - Categorical: Matching dissimilarity (like K-Modes)
 
     Args:
-        feature_matrix: Standardized feature matrix
+        feature_matrix: Mixed feature matrix (numerical + categorical)
         n_clusters: Number of clusters to create
         random_seed: Random seed for reproducibility
-        max_iter: Maximum iterations for KMeans
+        max_iter: Maximum iterations
         n_init: Number of initializations
+        gamma: Weight for categorical features (None = auto-calculate)
 
     Returns:
         ClusteringResult with cluster assignments and statistics
@@ -216,7 +350,7 @@ def cluster_customers(
         ClusteringError: If clustering fails
         InsufficientDataError: If insufficient samples
     """
-    n_samples = feature_matrix.matrix.shape[0]
+    n_samples = feature_matrix.numerical_matrix.shape[0]
 
     if n_samples < n_clusters:
         raise InsufficientDataError(
@@ -235,68 +369,108 @@ def cluster_customers(
         )
 
     try:
-        kmeans = KMeans(
+        # Combine numerical and categorical for K-Prototypes
+        combined_matrix = feature_matrix.combined_matrix
+        categorical_indices = feature_matrix.categorical_indices
+
+        kproto = KPrototypes(
             n_clusters=n_clusters,
+            init="Cao",  # Better initialization for mixed data
             random_state=random_seed,
             max_iter=max_iter,
             n_init=n_init,
+            gamma=gamma,  # None = auto-weight based on data
+            verbose=0,
         )
-        labels = kmeans.fit_predict(feature_matrix.matrix)
-        centroids = kmeans.cluster_centers_
 
-        # Calculate silhouette score if we have enough samples
+        labels = kproto.fit_predict(combined_matrix, categorical=categorical_indices)
+        labels = np.array(labels, dtype=np.int64)
+
+        # Get centroids (numerical) and modes (categorical)
+        n_numerical = feature_matrix.numerical_matrix.shape[1]
+        numerical_centroids = np.array(
+            [c[:n_numerical] for c in kproto.cluster_centroids_],
+            dtype=np.float64,
+        )
+        categorical_modes = [
+            [str(v) for v in c[n_numerical:]]
+            for c in kproto.cluster_centroids_
+        ]
+
+        # Calculate silhouette score on numerical features only
+        # (mixed silhouette is complex and less interpretable)
         silhouette = None
         if n_samples >= n_clusters + 1 and n_clusters > 1:
-            silhouette = float(silhouette_score(feature_matrix.matrix, labels))
+            try:
+                silhouette = float(silhouette_score(
+                    feature_matrix.numerical_matrix,
+                    labels,
+                ))
+            except Exception:
+                pass  # Silhouette calculation can fail with certain distributions
 
         # Calculate cluster sizes
         unique_labels, counts = np.unique(labels, return_counts=True)
         cluster_sizes = {int(label): int(count) for label, count in zip(unique_labels, counts)}
 
         # Calculate cluster statistics
-        cluster_stats: dict[int, dict[str, float]] = {}
+        cluster_stats: dict[int, dict[str, Any]] = {}
         for cluster_id in unique_labels:
             cluster_mask = labels == cluster_id
-            cluster_features = feature_matrix.matrix[cluster_mask]
+            cluster_numerical = feature_matrix.numerical_matrix[cluster_mask]
+            cluster_categorical = feature_matrix.categorical_matrix[cluster_mask]
 
-            stats: dict[str, float] = {}
-            for i, feature_name in enumerate(feature_matrix.feature_names):
-                stats[f"{feature_name}_mean"] = float(np.mean(cluster_features[:, i]))
-                stats[f"{feature_name}_std"] = float(np.std(cluster_features[:, i]))
+            stats: dict[str, Any] = {}
+
+            # Numerical stats
+            for i, feature_name in enumerate(feature_matrix.numerical_feature_names):
+                stats[f"{feature_name}_mean"] = float(np.mean(cluster_numerical[:, i]))
+                stats[f"{feature_name}_std"] = float(np.std(cluster_numerical[:, i]))
+
+            # Categorical stats (mode and distribution)
+            for i, feature_name in enumerate(feature_matrix.categorical_feature_names):
+                values, value_counts = np.unique(cluster_categorical[:, i], return_counts=True)
+                mode_idx = np.argmax(value_counts)
+                stats[f"{feature_name}_mode"] = str(values[mode_idx])
+                stats[f"{feature_name}_distribution"] = {
+                    str(v): int(c) for v, c in zip(values, value_counts)
+                }
 
             cluster_stats[int(cluster_id)] = stats
 
         return ClusteringResult(
             labels=labels,
-            centroids=centroids,
-            inertia=kmeans.inertia_,
+            centroids=numerical_centroids,
+            categorical_centroids=categorical_modes,
+            cost=float(kproto.cost_),
             silhouette=silhouette,
             n_clusters=n_clusters,
             n_samples=n_samples,
-            feature_names=feature_matrix.feature_names,
+            feature_names=feature_matrix.numerical_feature_names,
+            categorical_feature_names=feature_matrix.categorical_feature_names,
             cluster_sizes=cluster_sizes,
             cluster_stats=cluster_stats,
         )
 
     except Exception as e:
         raise ClusteringError(
-            f"Clustering failed: {e!s}",
+            f"K-Prototypes clustering failed: {e!s}",
             n_clusters=n_clusters,
             n_samples=n_samples,
         ) from e
 
 
 def find_optimal_k(
-    feature_matrix: FeatureMatrix,
+    feature_matrix: MixedFeatureMatrix,
     *,
     k_range: tuple[int, int] = (2, 10),
     random_seed: int = 42,
 ) -> dict[str, Any]:
     """
-    Find optimal number of clusters using elbow method and silhouette scores.
+    Find optimal number of clusters using cost and silhouette scores.
 
     Args:
-        feature_matrix: Standardized feature matrix
+        feature_matrix: Mixed feature matrix
         k_range: Range of k values to test (min, max)
         random_seed: Random seed for reproducibility
 
@@ -304,7 +478,7 @@ def find_optimal_k(
         Dictionary with analysis results
     """
     min_k, max_k = k_range
-    n_samples = feature_matrix.matrix.shape[0]
+    n_samples = feature_matrix.numerical_matrix.shape[0]
 
     # Adjust max_k if needed
     max_k = min(max_k, n_samples - 1)
@@ -313,12 +487,12 @@ def find_optimal_k(
     if min_k > max_k:
         return {
             "optimal_k": min_k,
-            "inertias": {},
+            "costs": {},
             "silhouettes": {},
             "reason": "insufficient_samples",
         }
 
-    inertias: dict[int, float] = {}
+    costs: dict[int, float] = {}
     silhouettes: dict[int, float] = {}
 
     for k in range(min_k, max_k + 1):
@@ -328,20 +502,20 @@ def find_optimal_k(
                 n_clusters=k,
                 random_seed=random_seed,
             )
-            inertias[k] = result.inertia
+            costs[k] = result.cost
             if result.silhouette is not None:
                 silhouettes[k] = result.silhouette
         except (ClusteringError, InsufficientDataError):
             continue
 
-    # Find optimal k by silhouette score
+    # Find optimal k by silhouette score (higher is better)
     optimal_k = min_k
     if silhouettes:
         optimal_k = max(silhouettes.keys(), key=lambda k: silhouettes[k])
 
     return {
         "optimal_k": optimal_k,
-        "inertias": inertias,
+        "costs": costs,
         "silhouettes": silhouettes,
         "reason": "silhouette_score" if silhouettes else "default",
     }
@@ -562,6 +736,14 @@ def create_segments_from_clusters(
         # Extract defining traits from profiles
         defining_traits, trait_summary = _extract_segment_traits(profiles_in_cluster)
 
+        # Add categorical modes to trait summary
+        if cluster_id < len(clustering_result.categorical_centroids):
+            cat_modes = clustering_result.categorical_centroids[cluster_id]
+            trait_summary["categorical_modes"] = dict(zip(
+                clustering_result.categorical_feature_names,
+                cat_modes,
+            ))
+
         # Create members
         members = [
             SegmentMember(
@@ -571,10 +753,10 @@ def create_segments_from_clusters(
             for p in profiles_in_cluster
         ]
 
-        # Get centroid as list
+        # Get centroid as list (numerical only)
         centroid = clustering_result.centroids[cluster_id].tolist()
 
-        # Generate descriptive name based on traits
+        # Generate descriptive name based on traits and categorical modes
         segment_name = f"Cluster {cluster_id}"
         if defining_traits:
             # Use first two distinctive traits for naming
@@ -605,9 +787,10 @@ def create_segments_from_clusters(
 
 class CustomerClusterer:
     """
-    High-level interface for customer clustering.
+    High-level interface for customer clustering using K-Prototypes.
 
     Combines feature extraction, standardization, clustering, and segment creation.
+    Handles mixed data types (numerical + categorical) properly.
     """
 
     def __init__(
@@ -617,6 +800,7 @@ class CustomerClusterer:
         random_seed: int = 42,
         auto_select_k: bool = False,
         k_range: tuple[int, int] = (2, 10),
+        gamma: float | None = None,
     ) -> None:
         """
         Initialize CustomerClusterer.
@@ -626,11 +810,13 @@ class CustomerClusterer:
             random_seed: Random seed for reproducibility
             auto_select_k: Automatically select optimal k
             k_range: Range of k to test if auto_select_k=True
+            gamma: Weight for categorical features (None = auto-calculate)
         """
         self.n_clusters = n_clusters
         self.random_seed = random_seed
         self.auto_select_k = auto_select_k
         self.k_range = k_range
+        self.gamma = gamma
 
         self._scaler: StandardScaler | None = None
         self._last_result: ClusteringResult | None = None
@@ -648,11 +834,11 @@ class CustomerClusterer:
         Returns:
             ClusteringResult with cluster assignments
         """
-        # Extract features
-        features = extract_features(profiles)
+        # Extract mixed features
+        features = extract_mixed_features(profiles)
 
-        # Standardize
-        standardized = standardize_features(features)
+        # Standardize numerical features only
+        standardized = standardize_numerical_features(features)
         self._scaler = standardized.scaler
 
         # Auto-select k if requested
@@ -665,11 +851,12 @@ class CustomerClusterer:
             )
             n_clusters = k_analysis["optimal_k"]
 
-        # Cluster
+        # Cluster using K-Prototypes
         result = cluster_customers(
             standardized,
             n_clusters=n_clusters,
             random_seed=self.random_seed,
+            gamma=self.gamma,
         )
 
         self._last_result = result
@@ -715,11 +902,14 @@ def get_cluster_summary(result: ClusteringResult) -> dict[str, Any]:
         Dictionary with summary information
     """
     summary: dict[str, Any] = {
+        "algorithm": "K-Prototypes",
         "n_clusters": result.n_clusters,
         "n_samples": result.n_samples,
-        "inertia": result.inertia,
+        "cost": result.cost,
         "silhouette_score": result.silhouette,
         "cluster_sizes": result.cluster_sizes,
+        "numerical_features": result.feature_names,
+        "categorical_features": result.categorical_feature_names,
     }
 
     # Size distribution
@@ -731,4 +921,22 @@ def get_cluster_summary(result: ClusteringResult) -> dict[str, Any]:
         "std": float(np.std(sizes)),
     }
 
+    # Categorical modes for each cluster
+    summary["cluster_modes"] = {}
+    for i, modes in enumerate(result.categorical_centroids):
+        summary["cluster_modes"][i] = dict(zip(
+            result.categorical_feature_names,
+            modes,
+        ))
+
     return summary
+
+
+# =============================================================================
+# BACKWARD COMPATIBILITY
+# =============================================================================
+
+# Keep old names for backward compatibility
+FeatureMatrix = MixedFeatureMatrix
+extract_features = extract_mixed_features
+standardize_features = standardize_numerical_features
