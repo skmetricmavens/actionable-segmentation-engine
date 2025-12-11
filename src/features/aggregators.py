@@ -84,8 +84,10 @@ def aggregate_purchases(
     # Calculate total revenue from purchase events
     total_revenue = Decimal("0")
     for event in purchase_events:
-        if event.properties.total_amount is not None:
-            total_revenue += event.properties.total_amount
+        # Check both total_amount and order_total (alternative name)
+        amount = event.properties.total_amount or event.properties.order_total
+        if amount is not None:
+            total_revenue += amount
 
     # Calculate average order value
     avg_order_value = Decimal("0")
