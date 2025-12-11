@@ -92,11 +92,18 @@ from src.analysis.integrated_analysis import (
 class PipelineConfig:
     """Configuration for pipeline execution."""
 
-    # Data generation
+    # Data source: "synthetic" or "bigquery"
+    data_source: Literal["synthetic", "bigquery"] = "synthetic"
+
+    # Synthetic data generation (used when data_source="synthetic")
     n_customers: int = 1000
     data_seed: int = 42
     merge_probability: float = 0.15
     date_range: tuple[datetime, datetime] | None = None
+
+    # BigQuery configuration (used when data_source="bigquery")
+    # Import BigQueryConfig and set this field to use BQ data
+    bigquery_config: Any | None = None  # BigQueryConfig from src.data.bigquery
 
     # Profile building
     min_events_per_customer: int = 1
@@ -318,6 +325,18 @@ def run_pipeline(
                 return events, id_history
             elif dataset is not None:
                 return dataset.events, dataset.id_history
+            elif config.data_source == "bigquery" and config.bigquery_config is not None:
+                # Load from BigQuery
+                from src.data.bigquery import BigQueryAdapter
+                adapter = BigQueryAdapter(config.bigquery_config)
+                load_result = adapter.load()
+                if load_result.errors:
+                    raise PipelineError(
+                        f"BigQuery load errors: {load_result.errors}",
+                        stage="Data Acquisition",
+                    )
+                # id_history is already a list[CustomerIdHistory]
+                return load_result.events, load_result.id_history
             else:
                 # Generate synthetic data
                 date_range = config.date_range or (
