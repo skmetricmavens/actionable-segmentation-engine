@@ -401,6 +401,11 @@ class IntegratedAnalyzer:
                     total_opportunity_value=opportunity_value,
                     avg_similarity_score=avg_similarity,
                     top_candidates=segment_lookalikes[:10],
+                    # Copy WHY explanations from global analysis
+                    opportunity_reason=cat_whitespace.opportunity_reason,
+                    buyer_profile_summary=cat_whitespace.buyer_profile_summary,
+                    lookalike_profile_summary=cat_whitespace.lookalike_profile_summary,
+                    gap_description=cat_whitespace.gap_description,
                 )
 
                 category_opportunities.append(segment_cat_whitespace)
@@ -546,14 +551,27 @@ def format_integrated_report(result: IntegratedAnalysisResult) -> str:
             dims = [d.value for d in usable.actionability.actionability_dimensions]
             lines.append(f"    Actionable Dimensions: {', '.join(dims)}")
 
-        # Whitespace opportunities
+        # Whitespace opportunities with WHY explanations
         if usable.whitespace and usable.whitespace.category_opportunities:
-            lines.append(f"    Whitespace Opportunities:")
+            lines.append(f"    Whitespace Opportunities ({usable.whitespace.total_lookalike_count} total lookalikes):")
             for cat_opp in usable.whitespace.category_opportunities[:3]:
                 lines.append(
-                    f"      - {cat_opp.category}: {cat_opp.n_lookalikes} lookalikes, "
+                    f"      [{cat_opp.category.upper()}] {cat_opp.n_lookalikes} lookalikes, "
                     f"${float(cat_opp.total_opportunity_value):,.0f} potential"
                 )
+                # Add the WHY explanation
+                if cat_opp.opportunity_reason:
+                    lines.append(f"        WHY: {cat_opp.opportunity_reason}")
+                if cat_opp.gap_description:
+                    lines.append(f"        {cat_opp.gap_description}")
+                # Show buyer vs lookalike comparison
+                if cat_opp.buyer_profile_summary and cat_opp.lookalike_profile_summary:
+                    buyer = cat_opp.buyer_profile_summary
+                    lookalike = cat_opp.lookalike_profile_summary
+                    lines.append(f"        COMPARISON: Buyers ({buyer.get('count', 0)}) vs Lookalikes ({lookalike.get('count', 0)}):")
+                    lines.append(f"          Sessions: {buyer.get('avg_sessions', 0):.0f} vs {lookalike.get('avg_sessions', 0):.0f}")
+                    lines.append(f"          Page Views: {buyer.get('avg_page_views', 0):.0f} vs {lookalike.get('avg_page_views', 0):.0f}")
+                    lines.append(f"          Cart Adds: {buyer.get('avg_cart_additions', 0):.0f} vs {lookalike.get('avg_cart_additions', 0):.0f}")
 
         # Recommended actions
         if usable.recommended_actions:
@@ -576,7 +594,7 @@ def format_integrated_report(result: IntegratedAnalysisResult) -> str:
             for reason in rejected.usability_reasons:
                 lines.append(f"      - {reason}")
 
-    # Global Whitespace Summary
+    # Global Whitespace Summary with explanations
     if result.global_whitespace:
         lines.append("")
         lines.append("=" * 70)
@@ -585,13 +603,17 @@ def format_integrated_report(result: IntegratedAnalysisResult) -> str:
         lines.append(f"Total Opportunities: {result.global_whitespace.total_opportunities:,}")
         lines.append(f"Total Opportunity Value: ${float(result.global_whitespace.total_opportunity_value):,.2f}")
         lines.append("")
-        lines.append("Top Categories:")
+        lines.append("Top Categories (with WHY):")
 
         for cat in result.global_whitespace.get_top_categories(5):
             lines.append(
-                f"  - {cat.category}: {cat.n_lookalikes} lookalikes "
+                f"  [{cat.category.upper()}] {cat.n_lookalikes} lookalikes "
                 f"(${float(cat.total_opportunity_value):,.0f})"
             )
+            if cat.opportunity_reason:
+                lines.append(f"    WHY: {cat.opportunity_reason}")
+            if cat.gap_description:
+                lines.append(f"    {cat.gap_description}")
 
     lines.append("")
     lines.append("=" * 70)
@@ -651,6 +673,10 @@ def export_integrated_analysis(
                         "n_lookalikes": cat.n_lookalikes,
                         "opportunity_value": float(cat.total_opportunity_value),
                         "avg_similarity": cat.avg_similarity_score,
+                        "opportunity_reason": cat.opportunity_reason,
+                        "gap_description": cat.gap_description,
+                        "buyer_profile": cat.buyer_profile_summary,
+                        "lookalike_profile": cat.lookalike_profile_summary,
                     }
                     for cat in usable.whitespace.category_opportunities[:5]
                 ],
@@ -670,6 +696,10 @@ def export_integrated_analysis(
                     "category": cat.category,
                     "n_lookalikes": cat.n_lookalikes,
                     "opportunity_value": float(cat.total_opportunity_value),
+                    "opportunity_reason": cat.opportunity_reason,
+                    "gap_description": cat.gap_description,
+                    "buyer_profile": cat.buyer_profile_summary,
+                    "lookalike_profile": cat.lookalike_profile_summary,
                 }
                 for cat in result.global_whitespace.get_top_categories(10)
             ],

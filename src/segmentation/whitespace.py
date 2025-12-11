@@ -65,6 +65,12 @@ class CategoryWhitespace:
     # Top opportunities
     top_candidates: list[LookalikeCandidate] = field(default_factory=list)
 
+    # WHY this is an opportunity - explanation fields
+    opportunity_reason: str = ""  # Human-readable explanation
+    buyer_profile_summary: dict[str, Any] = field(default_factory=dict)  # What buyers look like
+    lookalike_profile_summary: dict[str, Any] = field(default_factory=dict)  # What lookalikes look like
+    gap_description: str = ""  # What's the gap (engaged but not buying)
+
 
 @dataclass
 class WhitespaceAnalysisResult:
@@ -505,6 +511,17 @@ class WhitespaceAnalyzer:
         buyer_avg_clv = sum(b.clv_estimate for b in buyers) / len(buyers)
         total_opportunity = buyer_avg_clv * len(lookalike_candidates)
 
+        # Generate WHY explanations
+        buyer_profile_summary, lookalike_profile_summary, opportunity_reason, gap_description = (
+            self._generate_opportunity_explanation(
+                buyers=buyers,
+                lookalikes=[profile_lookup[c.customer_id] for c in lookalike_candidates],
+                category=category,
+                avg_similarity=float(np.mean([c.similarity_score for c in lookalike_candidates]))
+                if lookalike_candidates else 0.0,
+            )
+        )
+
         return CategoryWhitespace(
             category=category,
             n_buyers=len(buyers),
@@ -517,7 +534,164 @@ class WhitespaceAnalyzer:
             if lookalike_candidates
             else 0.0,
             top_candidates=top_candidates,
+            opportunity_reason=opportunity_reason,
+            buyer_profile_summary=buyer_profile_summary,
+            lookalike_profile_summary=lookalike_profile_summary,
+            gap_description=gap_description,
         )
+
+    def _generate_opportunity_explanation(
+        self,
+        buyers: list[CustomerProfile],
+        lookalikes: list[CustomerProfile],
+        category: str,
+        avg_similarity: float,
+    ) -> tuple[dict[str, Any], dict[str, Any], str, str]:
+        """
+        Generate human-readable explanations for WHY this is an opportunity.
+
+        Args:
+            buyers: Profiles who purchased in category
+            lookalikes: Profiles similar to buyers but haven't purchased
+            category: Category being analyzed
+            avg_similarity: Average similarity score
+
+        Returns:
+            Tuple of (buyer_summary, lookalike_summary, opportunity_reason, gap_description)
+        """
+        # Summarize buyer profile
+        buyer_summary: dict[str, Any] = {}
+        if buyers:
+            buyer_summary = {
+                "count": len(buyers),
+                "avg_sessions": round(sum(b.total_sessions for b in buyers) / len(buyers), 1),
+                "avg_page_views": round(sum(b.total_page_views for b in buyers) / len(buyers), 1),
+                "avg_items_viewed": round(sum(b.total_items_viewed for b in buyers) / len(buyers), 1),
+                "avg_cart_additions": round(sum(b.total_cart_additions for b in buyers) / len(buyers), 1),
+                "avg_clv": round(float(sum(b.clv_estimate for b in buyers) / len(buyers)), 2),
+                "avg_purchases": round(sum(b.total_purchases for b in buyers) / len(buyers), 1),
+            }
+
+            # Get average category engagement for buyers
+            buyer_cat_views = []
+            for b in buyers:
+                cat_aff = next((a for a in b.category_affinities if a.category == category), None)
+                if cat_aff:
+                    buyer_cat_views.append(cat_aff.view_count)
+            if buyer_cat_views:
+                buyer_summary["avg_category_views"] = round(sum(buyer_cat_views) / len(buyer_cat_views), 1)
+
+        # Summarize lookalike profile
+        lookalike_summary: dict[str, Any] = {}
+        if lookalikes:
+            lookalike_summary = {
+                "count": len(lookalikes),
+                "avg_sessions": round(sum(l.total_sessions for l in lookalikes) / len(lookalikes), 1),
+                "avg_page_views": round(sum(l.total_page_views for l in lookalikes) / len(lookalikes), 1),
+                "avg_items_viewed": round(sum(l.total_items_viewed for l in lookalikes) / len(lookalikes), 1),
+                "avg_cart_additions": round(sum(l.total_cart_additions for l in lookalikes) / len(lookalikes), 1),
+                "avg_clv": round(float(sum(l.clv_estimate for l in lookalikes) / len(lookalikes)), 2),
+                "avg_purchases": round(sum(l.total_purchases for l in lookalikes) / len(lookalikes), 1),
+            }
+
+            # Get average category engagement for lookalikes
+            lookalike_cat_views = []
+            for l in lookalikes:
+                cat_aff = next((a for a in l.category_affinities if a.category == category), None)
+                if cat_aff:
+                    lookalike_cat_views.append(cat_aff.view_count)
+            if lookalike_cat_views:
+                lookalike_summary["avg_category_views"] = round(sum(lookalike_cat_views) / len(lookalike_cat_views), 1)
+
+        # Generate opportunity reason
+        opportunity_reason = self._build_opportunity_reason(
+            buyer_summary, lookalike_summary, category, avg_similarity
+        )
+
+        # Generate gap description
+        gap_description = self._build_gap_description(
+            buyer_summary, lookalike_summary, category
+        )
+
+        return buyer_summary, lookalike_summary, opportunity_reason, gap_description
+
+    def _build_opportunity_reason(
+        self,
+        buyer_summary: dict[str, Any],
+        lookalike_summary: dict[str, Any],
+        category: str,
+        avg_similarity: float,
+    ) -> str:
+        """Build human-readable reason why this is an opportunity."""
+        if not lookalike_summary:
+            return "No lookalikes found."
+
+        parts = []
+
+        # Similarity explanation
+        similarity_pct = avg_similarity * 100
+        if similarity_pct >= 95:
+            parts.append(f"These customers have VERY SIMILAR engagement patterns to {category} buyers ({similarity_pct:.0f}% match)")
+        elif similarity_pct >= 80:
+            parts.append(f"These customers have similar engagement patterns to {category} buyers ({similarity_pct:.0f}% match)")
+        else:
+            parts.append(f"These customers show moderate similarity to {category} buyers ({similarity_pct:.0f}% match)")
+
+        # Engagement comparison
+        if buyer_summary and lookalike_summary:
+            buyer_sessions = buyer_summary.get("avg_sessions", 0)
+            lookalike_sessions = lookalike_summary.get("avg_sessions", 0)
+
+            if lookalike_sessions >= buyer_sessions * 0.8:
+                parts.append(f"Lookalikes have comparable session activity ({lookalike_sessions:.0f} vs {buyer_sessions:.0f} buyer avg)")
+
+            buyer_views = buyer_summary.get("avg_category_views", 0)
+            lookalike_views = lookalike_summary.get("avg_category_views", 0)
+
+            if lookalike_views > 0:
+                parts.append(f"Lookalikes actively browse {category} ({lookalike_views:.0f} views avg)")
+
+        # Cart behavior
+        if lookalike_summary:
+            cart_adds = lookalike_summary.get("avg_cart_additions", 0)
+            if cart_adds > 0:
+                parts.append(f"They add items to cart ({cart_adds:.0f} avg cart additions)")
+
+        return ". ".join(parts) + "."
+
+    def _build_gap_description(
+        self,
+        buyer_summary: dict[str, Any],
+        lookalike_summary: dict[str, Any],
+        category: str,
+    ) -> str:
+        """Build description of the gap between engagement and purchase."""
+        if not buyer_summary or not lookalike_summary:
+            return ""
+
+        parts = []
+
+        # The core gap
+        parts.append(f"GAP: These customers view {category} products but haven't purchased")
+
+        # Compare behaviors
+        buyer_purchases = buyer_summary.get("avg_purchases", 0)
+        lookalike_purchases = lookalike_summary.get("avg_purchases", 0)
+
+        parts.append(f"Buyers avg {buyer_purchases:.1f} purchases, lookalikes avg {lookalike_purchases:.1f}")
+
+        # Potential blockers
+        buyer_cart = buyer_summary.get("avg_cart_additions", 0)
+        lookalike_cart = lookalike_summary.get("avg_cart_additions", 0)
+
+        if lookalike_cart > 0 and buyer_cart > 0:
+            cart_ratio = lookalike_cart / buyer_cart
+            if cart_ratio >= 0.7:
+                parts.append("Cart behavior similar to buyers - may need incentive to convert")
+            else:
+                parts.append("Lower cart additions - may need more product discovery")
+
+        return ". ".join(parts) + "."
 
     def analyze_cross_category(
         self,
