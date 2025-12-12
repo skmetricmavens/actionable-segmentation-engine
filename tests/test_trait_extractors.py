@@ -9,8 +9,10 @@ import pytest
 
 from src.data.schemas import (
     ActionabilityDimension,
+    BehaviorType,
     CategoryAffinity,
     CustomerProfile,
+    PurchaseIntervalMetrics,
 )
 from src.features.trait_extractors import (
     BrowserNotBuyerExtractor,
@@ -25,6 +27,7 @@ from src.features.trait_extractors import (
     HighValueDormantExtractor,
     MobileFirstExtractor,
     NightOwlShopperExtractor,
+    PurchaseBehaviorTypeExtractor,
     SeasonalShopperExtractor,
     TraitExtractionEngine,
     WeekendShopperExtractor,
@@ -57,6 +60,7 @@ def make_profile(
     preferred_hour_of_day: int | None = 14,  # 2 PM
     mobile_session_ratio: float = 0.3,
     category_affinities: list[CategoryAffinity] | None = None,
+    purchase_intervals: PurchaseIntervalMetrics | None = None,
     first_seen: datetime | None = None,
     last_seen: datetime | None = None,
 ) -> CustomerProfile:
@@ -83,6 +87,7 @@ def make_profile(
         total_cart_additions=total_cart_additions,
         cart_abandonment_rate=cart_abandonment_rate,
         category_affinities=category_affinities,
+        purchase_intervals=purchase_intervals,
         preferred_day_of_week=preferred_day_of_week,
         preferred_hour_of_day=preferred_hour_of_day,
         mobile_session_ratio=mobile_session_ratio,
@@ -214,6 +219,134 @@ class TestHighValueDormantExtractor:
         trait = extractor.extract(profile)
 
         assert trait is None
+
+
+class TestPurchaseBehaviorTypeExtractor:
+    """Tests for PurchaseBehaviorTypeExtractor."""
+
+    def test_new_customer_no_purchases(self) -> None:
+        """Test customer with no purchases is classified as NEW."""
+        profile = make_profile(total_purchases=0)
+        extractor = PurchaseBehaviorTypeExtractor()
+
+        trait = extractor.extract(profile)
+
+        assert trait is not None
+        assert trait.value == BehaviorType.NEW.value
+
+    def test_one_time_customer(self) -> None:
+        """Test customer with single purchase is classified as ONE_TIME."""
+        profile = make_profile(total_purchases=1)
+        extractor = PurchaseBehaviorTypeExtractor()
+
+        trait = extractor.extract(profile)
+
+        assert trait is not None
+        assert trait.value == BehaviorType.ONE_TIME.value
+
+    def test_regular_customer(self) -> None:
+        """Test customer with regular purchase intervals is classified as REGULAR."""
+        intervals = PurchaseIntervalMetrics(
+            interval_mean=30.0,
+            interval_std=5.0,
+            interval_min=25.0,
+            interval_max=35.0,
+            interval_cv=0.17,  # Low CV = regular
+            regularity_index=0.92,
+        )
+        profile = make_profile(total_purchases=5, purchase_intervals=intervals)
+        extractor = PurchaseBehaviorTypeExtractor()
+
+        trait = extractor.extract(profile)
+
+        assert trait is not None
+        assert trait.value == BehaviorType.REGULAR.value
+        assert "Predictable" in trait.description
+
+    def test_irregular_customer(self) -> None:
+        """Test customer with variable intervals is classified as IRREGULAR."""
+        intervals = PurchaseIntervalMetrics(
+            interval_mean=30.0,
+            interval_std=20.0,
+            interval_min=7.0,
+            interval_max=60.0,
+            interval_cv=0.67,  # Medium CV = irregular
+            regularity_index=0.67,
+        )
+        profile = make_profile(total_purchases=4, purchase_intervals=intervals)
+        extractor = PurchaseBehaviorTypeExtractor()
+
+        trait = extractor.extract(profile)
+
+        assert trait is not None
+        assert trait.value == BehaviorType.IRREGULAR.value
+        assert "Variable" in trait.description
+
+    def test_long_cycle_customer_high_cv(self) -> None:
+        """Test customer with high CV is classified as LONG_CYCLE."""
+        intervals = PurchaseIntervalMetrics(
+            interval_mean=45.0,
+            interval_std=60.0,
+            interval_min=7.0,
+            interval_max=120.0,
+            interval_cv=1.33,  # High CV = long cycle
+            regularity_index=0.33,
+        )
+        profile = make_profile(total_purchases=3, purchase_intervals=intervals)
+        extractor = PurchaseBehaviorTypeExtractor()
+
+        trait = extractor.extract(profile)
+
+        assert trait is not None
+        assert trait.value == BehaviorType.LONG_CYCLE.value
+
+    def test_long_cycle_customer_long_intervals(self) -> None:
+        """Test customer with long mean intervals is classified as LONG_CYCLE."""
+        intervals = PurchaseIntervalMetrics(
+            interval_mean=120.0,  # Long mean interval
+            interval_std=20.0,
+            interval_min=100.0,
+            interval_max=140.0,
+            interval_cv=0.17,  # Even with low CV, long intervals = long cycle
+            regularity_index=0.92,
+        )
+        profile = make_profile(total_purchases=3, purchase_intervals=intervals)
+        extractor = PurchaseBehaviorTypeExtractor()
+
+        trait = extractor.extract(profile)
+
+        assert trait is not None
+        assert trait.value == BehaviorType.LONG_CYCLE.value
+
+    def test_customer_without_interval_data(self) -> None:
+        """Test customer with purchases but no interval data is classified as NEW."""
+        profile = make_profile(total_purchases=3, purchase_intervals=None)
+        extractor = PurchaseBehaviorTypeExtractor()
+
+        trait = extractor.extract(profile)
+
+        assert trait is not None
+        assert trait.value == BehaviorType.NEW.value
+
+    def test_custom_thresholds(self) -> None:
+        """Test custom classification thresholds."""
+        intervals = PurchaseIntervalMetrics(
+            interval_mean=30.0,
+            interval_std=12.0,
+            interval_min=15.0,
+            interval_max=45.0,
+            interval_cv=0.4,  # Would be REGULAR with default thresholds
+            regularity_index=0.8,
+        )
+        profile = make_profile(total_purchases=4, purchase_intervals=intervals)
+
+        # With stricter threshold, this becomes IRREGULAR
+        extractor = PurchaseBehaviorTypeExtractor(regular_cv_threshold=0.3)
+
+        trait = extractor.extract(profile)
+
+        assert trait is not None
+        assert trait.value == BehaviorType.IRREGULAR.value
 
 
 # =============================================================================

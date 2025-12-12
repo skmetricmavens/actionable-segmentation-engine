@@ -21,6 +21,7 @@ from typing import Any
 from src.data.schemas import (
     ActionabilityDimension,
     ActionableTrait,
+    BehaviorType,
     CustomerProfile,
     CustomerTraits,
 )
@@ -182,6 +183,92 @@ class HighValueDormantExtractor(TraitExtractor):
             name=self.trait_name,
             description=f"Previously valuable customer inactive for {profile.days_since_last_purchase} days",
             value=True,
+            actionability_dimension=self.actionability_dimension,
+            business_relevance=self.business_relevance,
+        )
+
+
+class PurchaseBehaviorTypeExtractor(TraitExtractor):
+    """Classify customer purchase behavior pattern for CLV prediction.
+
+    Uses purchase interval statistics to classify customers as:
+    - REGULAR: Predictable purchase timing (CV < 0.5)
+    - IRREGULAR: Variable purchase timing (CV 0.5-1.0)
+    - LONG_CYCLE: Infrequent/seasonal purchaser (CV > 1.0 or interval > 90 days)
+    - ONE_TIME: Single purchase only
+    - NEW: Insufficient data (< 2 purchases)
+    """
+
+    def __init__(
+        self,
+        *,
+        regular_cv_threshold: float = 0.5,
+        irregular_cv_threshold: float = 1.0,
+        long_cycle_interval_days: float = 90.0,
+    ) -> None:
+        self.regular_cv_threshold = regular_cv_threshold
+        self.irregular_cv_threshold = irregular_cv_threshold
+        self.long_cycle_interval_days = long_cycle_interval_days
+
+    @property
+    def trait_name(self) -> str:
+        return "purchase_behavior_type"
+
+    @property
+    def actionability_dimension(self) -> ActionabilityDimension:
+        return ActionabilityDimension.WHO
+
+    @property
+    def business_relevance(self) -> str:
+        return "Tailor engagement strategy based on purchase predictability"
+
+    def classify_behavior(self, profile: CustomerProfile) -> BehaviorType:
+        """Determine behavior type from profile data."""
+        # Not enough purchases to classify
+        if profile.total_purchases == 0:
+            return BehaviorType.NEW
+
+        if profile.total_purchases == 1:
+            return BehaviorType.ONE_TIME
+
+        # Need interval data for classification
+        intervals = profile.purchase_intervals
+        if intervals is None:
+            return BehaviorType.NEW
+
+        # Check for long-cycle first (mean interval > threshold)
+        if intervals.interval_mean is not None:
+            if intervals.interval_mean > self.long_cycle_interval_days:
+                return BehaviorType.LONG_CYCLE
+
+        # Classify by coefficient of variation
+        if intervals.interval_cv is not None:
+            if intervals.interval_cv < self.regular_cv_threshold:
+                return BehaviorType.REGULAR
+            elif intervals.interval_cv < self.irregular_cv_threshold:
+                return BehaviorType.IRREGULAR
+            else:
+                return BehaviorType.LONG_CYCLE
+
+        # Fallback: If we have 2+ purchases but no CV, treat as new
+        return BehaviorType.NEW
+
+    def extract(self, profile: CustomerProfile) -> ActionableTrait | None:
+        behavior_type = self.classify_behavior(profile)
+
+        # Always return a trait - behavior type is informative even for NEW
+        descriptions = {
+            BehaviorType.REGULAR: "Predictable purchase pattern - good for subscription offers",
+            BehaviorType.IRREGULAR: "Variable purchase timing - respond to triggers/promotions",
+            BehaviorType.LONG_CYCLE: "Infrequent purchaser - seasonal or considered purchases",
+            BehaviorType.ONE_TIME: "Single purchase only - needs reactivation",
+            BehaviorType.NEW: "New or insufficient history - needs nurturing",
+        }
+
+        return ActionableTrait(
+            name=self.trait_name,
+            description=descriptions.get(behavior_type, "Unknown pattern"),
+            value=behavior_type.value,
             actionability_dimension=self.actionability_dimension,
             business_relevance=self.business_relevance,
         )
