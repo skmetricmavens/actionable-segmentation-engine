@@ -45,62 +45,55 @@ def temp_data_dir():
 
 
 @pytest.fixture
-def mock_pandas():
-    """Mock pandas module for testing without actual parquet files."""
-    with patch.dict("sys.modules", {"pandas": MagicMock()}):
+def mock_polars():
+    """Mock polars module for testing without actual parquet files."""
+    with patch.dict("sys.modules", {"polars": MagicMock()}):
         yield
+
+
+def create_mock_polars_df(rows: list[dict[str, Any]]) -> MagicMock:
+    """Helper to create a mock Polars DataFrame."""
+    mock_df = MagicMock()
+    mock_df.height = len(rows)
+    mock_df.iter_rows = MagicMock(return_value=iter(rows))
+    return mock_df
 
 
 @pytest.fixture
 def sample_event_df():
     """Create a mock DataFrame with sample event data."""
-    mock_df = MagicMock()
-    mock_df.__len__ = MagicMock(return_value=2)
-
-    # Create mock rows
-    row1 = {
-        "internal_customer_id": "cust_001",
-        "timestamp": datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc),
-        "properties": {
-            "product_id": "prod_123",
-            "title": "Test Product",
-            "price": "29.99",
-            "category_level_1": "Electronics",
-        }
-    }
-    row2 = {
-        "internal_customer_id": "cust_002",
-        "timestamp": "2024-01-16T14:00:00Z",
-        "properties": {
-            "product_id": "prod_456",
-            "title": "Another Product",
-            "price": "49.99",
-        }
-    }
-
-    mock_df.iterrows = MagicMock(return_value=iter([
-        (0, MagicMock(**{"get": lambda k, d=None: row1.get(k, d)})),
-        (1, MagicMock(**{"get": lambda k, d=None: row2.get(k, d)})),
-    ]))
-
-    return mock_df
+    rows = [
+        {
+            "internal_customer_id": "cust_001",
+            "timestamp": datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc),
+            "properties": {
+                "product_id": "prod_123",
+                "title": "Test Product",
+                "price": "29.99",
+                "category_level_1": "Electronics",
+            }
+        },
+        {
+            "internal_customer_id": "cust_002",
+            "timestamp": "2024-01-16T14:00:00Z",
+            "properties": {
+                "product_id": "prod_456",
+                "title": "Another Product",
+                "price": "49.99",
+            }
+        },
+    ]
+    return create_mock_polars_df(rows)
 
 
 @pytest.fixture
 def sample_id_history_df():
     """Create a mock DataFrame with ID history data."""
-    mock_df = MagicMock()
-    mock_df.__len__ = MagicMock(return_value=2)
-
-    row1 = {"internal_customer_id": "cust_001", "past_id": "old_001"}
-    row2 = {"internal_customer_id": "cust_002", "past_id": "old_002"}
-
-    mock_df.iterrows = MagicMock(return_value=iter([
-        (0, MagicMock(**{"get": lambda k, d=None: row1.get(k, d)})),
-        (1, MagicMock(**{"get": lambda k, d=None: row2.get(k, d)})),
-    ]))
-
-    return mock_df
+    rows = [
+        {"internal_customer_id": "cust_001", "past_id": "old_001"},
+        {"internal_customer_id": "cust_002", "past_id": "old_002"},
+    ]
+    return create_mock_polars_df(rows)
 
 
 # =============================================================================
@@ -227,39 +220,39 @@ class TestLocalDataLoaderInit:
 
 
 # =============================================================================
-# TESTS: LocalDataLoader._get_pandas
+# TESTS: LocalDataLoader._get_polars
 # =============================================================================
 
 
-class TestGetPandas:
-    """Tests for lazy pandas import."""
+class TestGetPolars:
+    """Tests for lazy polars import."""
 
-    def test_imports_pandas_on_first_call(self, temp_data_dir):
-        """Should import pandas lazily."""
+    def test_imports_polars_on_first_call(self, temp_data_dir):
+        """Should import polars lazily."""
         loader = LocalDataLoader(temp_data_dir)
-        assert loader._pandas_module is None
+        assert loader._pandas_module is None  # Attribute name kept for compatibility
 
-        pd = loader._get_pandas()
-        assert pd is not None
+        pl = loader._get_polars()
+        assert pl is not None
         assert loader._pandas_module is not None
 
-    def test_caches_pandas_module(self, temp_data_dir):
-        """Should cache pandas module after first import."""
+    def test_caches_polars_module(self, temp_data_dir):
+        """Should cache polars module after first import."""
         loader = LocalDataLoader(temp_data_dir)
 
-        pd1 = loader._get_pandas()
-        pd2 = loader._get_pandas()
+        pl1 = loader._get_polars()
+        pl2 = loader._get_polars()
 
-        assert pd1 is pd2
+        assert pl1 is pl2
 
-    def test_raises_import_error_without_pandas(self, temp_data_dir):
-        """Should raise ImportError with helpful message if pandas unavailable."""
+    def test_raises_import_error_without_polars(self, temp_data_dir):
+        """Should raise ImportError with helpful message if polars unavailable."""
         loader = LocalDataLoader(temp_data_dir)
 
-        with patch.dict("sys.modules", {"pandas": None}):
-            with patch("builtins.__import__", side_effect=ImportError("No module named 'pandas'")):
-                with pytest.raises(ImportError, match="pandas is required"):
-                    loader._get_pandas()
+        with patch.dict("sys.modules", {"polars": None}):
+            with patch("builtins.__import__", side_effect=ImportError("No module named 'polars'")):
+                with pytest.raises(ImportError, match="polars is required"):
+                    loader._get_polars()
 
 
 # =============================================================================
@@ -300,11 +293,11 @@ class TestLocalDataLoaderLoad:
             include_tables=["purchase"]
         )
 
-        with patch.object(loader, "_get_pandas") as mock_pd:
-            mock_pd.return_value.read_parquet.return_value = MagicMock(
-                __len__=lambda x: 0,
-                iterrows=lambda: iter([])
-            )
+        with patch.object(loader, "_get_polars") as mock_pd:
+            mock_df = MagicMock()
+            mock_df.height = 0
+            mock_df.iter_rows = MagicMock(return_value=iter([]))
+            mock_pd.return_value.read_parquet.return_value = mock_df
 
             result = loader.load()
 
@@ -322,11 +315,11 @@ class TestLocalDataLoaderLoad:
             exclude_tables=["session_start"]
         )
 
-        with patch.object(loader, "_get_pandas") as mock_pd:
-            mock_pd.return_value.read_parquet.return_value = MagicMock(
-                __len__=lambda x: 0,
-                iterrows=lambda: iter([])
-            )
+        with patch.object(loader, "_get_polars") as mock_pd:
+            mock_df = MagicMock()
+            mock_df.height = 0
+            mock_df.iter_rows = MagicMock(return_value=iter([]))
+            mock_pd.return_value.read_parquet.return_value = mock_df
 
             result = loader.load()
 
@@ -673,10 +666,7 @@ class TestLoadIdHistory:
             {"internal_customer_id": "cust_002", "past_id": "old_002"},
         ]
 
-        mock_df.iterrows = MagicMock(return_value=iter([
-            (0, MagicMock(**{"get": lambda k, d=None, r=rows[0]: r.get(k, d)})),
-            (1, MagicMock(**{"get": lambda k, d=None, r=rows[1]: r.get(k, d)})),
-        ]))
+        mock_df.iter_rows = MagicMock(return_value=iter(rows))
 
         seen: set[str] = set()
         result = loader._load_id_history(mock_df, seen)
@@ -694,11 +684,7 @@ class TestLoadIdHistory:
             {"internal_customer_id": "cust_002", "past_id": "old_001"},  # Duplicate
         ]
 
-        mock_rows = [
-            MagicMock(**{"get": lambda k, d=None, r=rows[0]: r.get(k, d)}),
-            MagicMock(**{"get": lambda k, d=None, r=rows[1]: r.get(k, d)}),
-        ]
-        mock_df.iterrows = MagicMock(return_value=iter(enumerate(mock_rows)))
+        mock_df.iter_rows = MagicMock(return_value=iter(rows))
 
         seen: set[str] = set()
         result = loader._load_id_history(mock_df, seen)
@@ -716,11 +702,7 @@ class TestLoadIdHistory:
             {"internal_customer_id": None, "past_id": "old_002"},
         ]
 
-        mock_rows = [
-            MagicMock(**{"get": lambda k, d=None, r=rows[0]: r.get(k, d)}),
-            MagicMock(**{"get": lambda k, d=None, r=rows[1]: r.get(k, d)}),
-        ]
-        mock_df.iterrows = MagicMock(return_value=iter(enumerate(mock_rows)))
+        mock_df.iter_rows = MagicMock(return_value=iter(rows))
 
         seen: set[str] = set()
         result = loader._load_id_history(mock_df, seen)
@@ -741,7 +723,7 @@ class TestLoadIdHistory:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         seen: set[str] = set()
         result = loader._load_id_history(mock_df, seen)
@@ -773,7 +755,7 @@ class TestLoadMergeEvents:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         result = loader._load_merge_events(mock_df)
 
@@ -793,7 +775,7 @@ class TestLoadMergeEvents:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         result = loader._load_merge_events(mock_df)
 
@@ -813,7 +795,7 @@ class TestLoadMergeEvents:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         result = loader._load_merge_events(mock_df)
 
@@ -834,7 +816,7 @@ class TestLoadMergeEvents:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         result = loader._load_merge_events(mock_df)
 
@@ -855,7 +837,7 @@ class TestLoadMergeEvents:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         seen: set[str] = {"old_001"}  # Already seen
         result = loader._load_merge_events(mock_df, seen)
@@ -874,7 +856,7 @@ class TestLoadMergeEvents:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         result = loader._load_merge_events(mock_df)
 
@@ -892,7 +874,7 @@ class TestLoadMergeEvents:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         result = loader._load_merge_events(mock_df)
 
@@ -921,7 +903,7 @@ class TestLoadMergeEvents:
         mock_row.values = MagicMock(return_value=row_data.values())
         mock_row.items = MagicMock(return_value=row_data.items())
 
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         # Patch dict to return row_data when called with mock_row
         original_dict = dict
@@ -961,7 +943,7 @@ class TestLoadCustomerProperties:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         result = loader._load_customer_properties(mock_df)
 
@@ -984,7 +966,7 @@ class TestLoadCustomerProperties:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         result = loader._load_customer_properties(mock_df)
 
@@ -1003,7 +985,7 @@ class TestLoadCustomerProperties:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         result = loader._load_customer_properties(mock_df)
 
@@ -1021,7 +1003,7 @@ class TestLoadCustomerProperties:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         result = loader._load_customer_properties(mock_df)
 
@@ -1042,7 +1024,7 @@ class TestLoadCustomerProperties:
         mock_df = MagicMock()
         mock_row = MagicMock()
         mock_row.get = MagicMock(side_effect=lambda k, d=None: row_data.get(k, d))
-        mock_df.iterrows = MagicMock(return_value=iter([(0, mock_row)]))
+        mock_df.iter_rows = MagicMock(return_value=iter([row_data]))
 
         result = loader._load_customer_properties(mock_df)
 
@@ -1153,17 +1135,17 @@ class TestIntegration:
     """Integration tests with real (mocked) data flow."""
 
     def test_full_load_flow(self, temp_data_dir):
-        """Test complete load flow with mocked pandas."""
+        """Test complete load flow with mocked Polars."""
         # Create dummy parquet files
         (temp_data_dir / "purchase.parquet").touch()
         (temp_data_dir / "customers_id_history.parquet").touch()
 
         loader = LocalDataLoader(temp_data_dir)
 
-        # Mock pandas and its read_parquet method
-        with patch.object(loader, "_get_pandas") as mock_get_pandas:
-            mock_pd = MagicMock()
-            mock_get_pandas.return_value = mock_pd
+        # Mock Polars and its read_parquet method
+        with patch.object(loader, "_get_polars") as mock_get_polars:
+            mock_pl = MagicMock()
+            mock_get_polars.return_value = mock_pl
 
             # Setup purchase DataFrame
             purchase_row = {
@@ -1173,18 +1155,14 @@ class TestIntegration:
             }
 
             purchase_df = MagicMock()
-            purchase_df.__len__ = MagicMock(return_value=1)
-            purchase_mock_row = MagicMock()
-            purchase_mock_row.get = MagicMock(side_effect=lambda k, d=None: purchase_row.get(k, d))
-            purchase_df.iterrows = MagicMock(return_value=iter([(0, purchase_mock_row)]))
+            purchase_df.height = 1
+            purchase_df.iter_rows = MagicMock(return_value=iter([purchase_row]))
 
             # Setup ID history DataFrame
             id_history_row = {"internal_customer_id": "cust_001", "past_id": "old_001"}
             id_history_df = MagicMock()
-            id_history_df.__len__ = MagicMock(return_value=1)
-            id_mock_row = MagicMock()
-            id_mock_row.get = MagicMock(side_effect=lambda k, d=None: id_history_row.get(k, d))
-            id_history_df.iterrows = MagicMock(return_value=iter([(0, id_mock_row)]))
+            id_history_df.height = 1
+            id_history_df.iter_rows = MagicMock(return_value=iter([id_history_row]))
 
             def read_parquet_side_effect(path):
                 if "purchase" in str(path):
@@ -1193,7 +1171,7 @@ class TestIntegration:
                     return id_history_df
                 raise ValueError(f"Unexpected path: {path}")
 
-            mock_pd.read_parquet = MagicMock(side_effect=read_parquet_side_effect)
+            mock_pl.read_parquet = MagicMock(side_effect=read_parquet_side_effect)
 
             result = loader.load()
 
@@ -1206,9 +1184,9 @@ class TestIntegration:
 
         loader = LocalDataLoader(temp_data_dir)
 
-        with patch.object(loader, "_get_pandas") as mock_get_pandas:
-            mock_pd = MagicMock()
-            mock_get_pandas.return_value = mock_pd
+        with patch.object(loader, "_get_polars") as mock_get_polars:
+            mock_pl = MagicMock()
+            mock_get_polars.return_value = mock_pl
 
             # Setup merge DataFrame
             merge_row = {
@@ -1217,12 +1195,10 @@ class TestIntegration:
             }
 
             merge_df = MagicMock()
-            merge_df.__len__ = MagicMock(return_value=1)
-            merge_mock_row = MagicMock()
-            merge_mock_row.get = MagicMock(side_effect=lambda k, d=None: merge_row.get(k, d))
-            merge_df.iterrows = MagicMock(return_value=iter([(0, merge_mock_row)]))
+            merge_df.height = 1
+            merge_df.iter_rows = MagicMock(return_value=iter([merge_row]))
 
-            mock_pd.read_parquet.return_value = merge_df
+            mock_pl.read_parquet.return_value = merge_df
 
             result = loader.load()
 
@@ -1235,9 +1211,9 @@ class TestIntegration:
 
         loader = LocalDataLoader(temp_data_dir)
 
-        with patch.object(loader, "_get_pandas") as mock_get_pandas:
-            mock_pd = MagicMock()
-            mock_get_pandas.return_value = mock_pd
+        with patch.object(loader, "_get_polars") as mock_get_polars:
+            mock_pl = MagicMock()
+            mock_get_polars.return_value = mock_pl
 
             # Setup customer properties DataFrame
             props_row = {
@@ -1249,12 +1225,10 @@ class TestIntegration:
             }
 
             props_df = MagicMock()
-            props_df.__len__ = MagicMock(return_value=1)
-            props_mock_row = MagicMock()
-            props_mock_row.get = MagicMock(side_effect=lambda k, d=None: props_row.get(k, d))
-            props_df.iterrows = MagicMock(return_value=iter([(0, props_mock_row)]))
+            props_df.height = 1
+            props_df.iter_rows = MagicMock(return_value=iter([props_row]))
 
-            mock_pd.read_parquet.return_value = props_df
+            mock_pl.read_parquet.return_value = props_df
 
             result = loader.load()
 
@@ -1287,10 +1261,10 @@ class TestEdgeCases:
 
         loader = LocalDataLoader(temp_data_dir)
 
-        with patch.object(loader, "_get_pandas") as mock_get_pandas:
-            mock_pd = MagicMock()
-            mock_get_pandas.return_value = mock_pd
-            mock_pd.read_parquet.side_effect = Exception("Corrupt file")
+        with patch.object(loader, "_get_polars") as mock_get_polars:
+            mock_pl = MagicMock()
+            mock_get_polars.return_value = mock_pl
+            mock_pl.read_parquet.side_effect = Exception("Corrupt file")
 
             result = loader.load()
 
@@ -1303,32 +1277,34 @@ class TestEdgeCases:
 
         loader = LocalDataLoader(temp_data_dir)
 
-        with patch.object(loader, "_get_pandas") as mock_get_pandas:
-            mock_pd = MagicMock()
-            mock_get_pandas.return_value = mock_pd
+        with patch.object(loader, "_get_polars") as mock_get_polars:
+            mock_pl = MagicMock()
+            mock_get_polars.return_value = mock_pl
 
-            # Mock DataFrame that raises error during iteration
+            # Mock DataFrame - first row has missing data, second row succeeds
             mock_df = MagicMock()
-            mock_df.__len__ = MagicMock(return_value=1)
+            mock_df.height = 2
 
-            # First row raises, second row succeeds
-            row1 = MagicMock()
-            row1.get = MagicMock(side_effect=Exception("Conversion error"))
+            # First row is missing customer_id (should be skipped)
+            row1_data = {
+                "internal_customer_id": None,
+                "timestamp": datetime.now(tz=timezone.utc),
+                "properties": {}
+            }
 
+            # Second row is valid
             row2_data = {
                 "internal_customer_id": "cust_001",
                 "timestamp": datetime.now(tz=timezone.utc),
                 "properties": {}
             }
-            row2 = MagicMock()
-            row2.get = MagicMock(side_effect=lambda k, d=None: row2_data.get(k, d))
 
-            mock_df.iterrows = MagicMock(return_value=iter([(0, row1), (1, row2)]))
-            mock_pd.read_parquet.return_value = mock_df
+            mock_df.iter_rows = MagicMock(return_value=iter([row1_data, row2_data]))
+            mock_pl.read_parquet.return_value = mock_df
 
             result = loader.load()
 
-            # Should continue despite first row error
+            # Should continue despite first row being invalid
             assert "purchase" in result.tables_loaded
 
     def test_handles_none_properties(self, temp_data_dir):

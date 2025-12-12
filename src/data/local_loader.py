@@ -162,16 +162,16 @@ class LocalDataLoader:
         self.exclude_tables = set(exclude_tables) if exclude_tables else set()
         self._pandas_module: Any = None
 
-    def _get_pandas(self) -> Any:
-        """Lazy import of pandas."""
-        if self._pandas_module is None:
+    def _get_polars(self) -> Any:
+        """Lazy import of polars."""
+        if self._pandas_module is None:  # Reusing attribute name for compatibility
             try:
-                import pandas as pd
-                self._pandas_module = pd
-            except ImportError:
+                import polars as pl
+                self._pandas_module = pl
+            except ImportError as e:
                 raise ImportError(
-                    "pandas is required: pip install pandas pyarrow"
-                )
+                    "polars is required: pip install polars"
+                ) from e
         return self._pandas_module
 
     def load(self) -> LoadResult:
@@ -185,7 +185,7 @@ class LocalDataLoader:
         start_time = time.perf_counter()
 
         result = LoadResult()
-        pd = self._get_pandas()
+        pl = self._get_polars()
 
         if not self.data_dir.exists():
             result.errors.append(f"Data directory not found: {self.data_dir}")
@@ -207,9 +207,9 @@ class LocalDataLoader:
                 continue
 
             try:
-                df = pd.read_parquet(path)
+                df = pl.read_parquet(path)
                 result.tables_loaded.append(table_name)
-                result.total_rows += len(df)
+                result.total_rows += df.height
 
                 if table_name == "customers_id_history":
                     # Load ID history with deduplication
@@ -258,7 +258,7 @@ class LocalDataLoader:
 
     def _load_events(
         self,
-        df: Any,  # pd.DataFrame
+        df: Any,  # pl.DataFrame
         table_name: str,
     ) -> list[EventRecord]:
         """Convert DataFrame rows to EventRecord objects."""
@@ -266,7 +266,8 @@ class LocalDataLoader:
 
         event_type = TABLE_TO_EVENT_TYPE.get(table_name, EventType.VIEW_ITEM)
 
-        for _, row in df.iterrows():
+        # Polars iter_rows with named=True yields dicts
+        for row in df.iter_rows(named=True):
             try:
                 event = self._row_to_event(row, event_type)
                 if event:
@@ -279,10 +280,10 @@ class LocalDataLoader:
 
     def _row_to_event(
         self,
-        row: Any,  # pd.Series
+        row: dict[str, Any],  # Dict from Polars iter_rows(named=True)
         event_type: EventType,
     ) -> EventRecord | None:
-        """Convert a single row to EventRecord."""
+        """Convert a single row dict to EventRecord."""
         config = self.schema_config
 
         # Get required fields using config
@@ -292,10 +293,11 @@ class LocalDataLoader:
         if not customer_id or timestamp is None:
             return None
 
-        # Convert timestamp
+        # Convert timestamp (Polars returns datetime directly)
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         elif hasattr(timestamp, "to_pydatetime"):
+            # pandas Timestamp compatibility
             timestamp = timestamp.to_pydatetime()
 
         # Ensure timezone awareness
@@ -308,7 +310,7 @@ class LocalDataLoader:
             props = row.get(props_field, {})
         else:
             # Flat structure - use entire row as dict
-            props = dict(row)
+            props = row.copy()
         if props is None:
             props = {}
 
@@ -452,14 +454,15 @@ class LocalDataLoader:
 
     def _load_id_history(
         self,
-        df: Any,
+        df: Any,  # pl.DataFrame
         seen: set[str],
     ) -> list[CustomerIdHistory]:
         """Load CustomerIdHistory from customers_id_history table."""
         config = self.schema_config
         id_history: list[CustomerIdHistory] = []
 
-        for _, row in df.iterrows():
+        # Polars iter_rows with named=True yields dicts
+        for row in df.iter_rows(named=True):
             # Use config fields for flexible field access
             current_id = row.get(config.canonical_id_field)
             past_id = row.get(config.past_id_field)
@@ -481,7 +484,7 @@ class LocalDataLoader:
 
     def _load_merge_events(
         self,
-        df: Any,
+        df: Any,  # pl.DataFrame
         seen: set[str] | None = None,
     ) -> list[CustomerIdHistory]:
         """Load CustomerIdHistory from merge events table."""
@@ -490,10 +493,11 @@ class LocalDataLoader:
         if seen is None:
             seen = set()
 
-        for _, row in df.iterrows():
+        # Polars iter_rows with named=True yields dicts
+        for row in df.iter_rows(named=True):
             current_id = row.get(config.canonical_id_field)
             props_field = config.properties_field
-            props = row.get(props_field, {}) if props_field else dict(row)
+            props = row.get(props_field, {}) if props_field else row.copy()
 
             if not current_id or not props:
                 continue
@@ -530,7 +534,8 @@ class LocalDataLoader:
         """Load customer properties from customers_properties table."""
         customer_props: dict[str, dict[str, Any]] = {}
 
-        for _, row in df.iterrows():
+        # Polars iter_rows with named=True yields dicts
+        for row in df.iter_rows(named=True):
             customer_id = row.get("internal_id") or row.get("internal_customer_id")
             props = row.get("properties", {})
 
