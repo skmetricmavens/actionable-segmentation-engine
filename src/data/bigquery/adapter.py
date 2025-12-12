@@ -98,7 +98,8 @@ def transform_value(value: Any, transform: str | None) -> Any:
     if transform == "decimal":
         try:
             return Decimal(str(value))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, ArithmeticError):
+            # ArithmeticError catches decimal.InvalidOperation
             return None
 
     if transform == "int":
@@ -277,7 +278,7 @@ class BigQueryAdapter:
         events: list[EventRecord] = []
         internal_event_type = BQ_TO_INTERNAL_EVENT_TYPE.get(
             table_config.event_type,
-            InternalEventType.CUSTOM,
+            InternalEventType.VIEW_ITEM,  # Default fallback
         )
 
         for row in rows:

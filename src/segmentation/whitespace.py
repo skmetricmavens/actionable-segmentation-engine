@@ -447,10 +447,12 @@ class WhitespaceAnalyzer:
             return None
 
         if not candidates:
+            # Using actual revenue instead of projected CLV
+            # TODO: Replace with ML-based predictive CLV in future
             return CategoryWhitespace(
                 category=category,
                 n_buyers=len(buyers),
-                buyer_avg_clv=sum(b.clv_estimate for b in buyers) / len(buyers),
+                buyer_avg_clv=sum(b.total_revenue for b in buyers) / len(buyers),
                 buyer_avg_purchases=sum(b.total_purchases for b in buyers) / len(buyers),
                 n_candidates=0,
                 n_lookalikes=0,
@@ -507,8 +509,9 @@ class WhitespaceAnalyzer:
         lookalike_candidates.sort(key=lambda x: x.similarity_score, reverse=True)
         top_candidates = lookalike_candidates[: self.top_candidates_per_category]
 
-        # Calculate opportunity value (estimated CLV if converted)
-        buyer_avg_clv = sum(b.clv_estimate for b in buyers) / len(buyers)
+        # Calculate opportunity value using actual revenue (not projected CLV)
+        # TODO: Replace with ML-based predictive CLV in future
+        buyer_avg_clv = sum(b.total_revenue for b in buyers) / len(buyers)
         total_opportunity = buyer_avg_clv * len(lookalike_candidates)
 
         # Generate WHY explanations
@@ -568,7 +571,7 @@ class WhitespaceAnalyzer:
                 "avg_page_views": round(sum(b.total_page_views for b in buyers) / len(buyers), 1),
                 "avg_items_viewed": round(sum(b.total_items_viewed for b in buyers) / len(buyers), 1),
                 "avg_cart_additions": round(sum(b.total_cart_additions for b in buyers) / len(buyers), 1),
-                "avg_clv": round(float(sum(b.clv_estimate for b in buyers) / len(buyers)), 2),
+                "avg_clv": round(float(sum(b.total_revenue for b in buyers) / len(buyers)), 2),
                 "avg_purchases": round(sum(b.total_purchases for b in buyers) / len(buyers), 1),
             }
 
@@ -590,7 +593,7 @@ class WhitespaceAnalyzer:
                 "avg_page_views": round(sum(l.total_page_views for l in lookalikes) / len(lookalikes), 1),
                 "avg_items_viewed": round(sum(l.total_items_viewed for l in lookalikes) / len(lookalikes), 1),
                 "avg_cart_additions": round(sum(l.total_cart_additions for l in lookalikes) / len(lookalikes), 1),
-                "avg_clv": round(float(sum(l.clv_estimate for l in lookalikes) / len(lookalikes)), 2),
+                "avg_clv": round(float(sum(l.total_revenue for l in lookalikes) / len(lookalikes)), 2),
                 "avg_purchases": round(sum(l.total_purchases for l in lookalikes) / len(lookalikes), 1),
             }
 
@@ -787,7 +790,9 @@ class WhitespaceAnalyzer:
 
         lookalikes.sort(key=lambda x: x.similarity_score, reverse=True)
 
-        buyer_avg_clv = sum(t.clv_estimate for t in target_buyers) / len(target_buyers)
+        # Using actual revenue instead of projected CLV
+        # TODO: Replace with ML-based predictive CLV in future
+        buyer_avg_clv = sum(t.total_revenue for t in target_buyers) / len(target_buyers)
 
         return CategoryWhitespace(
             category=f"{source_category} -> {target_category}",

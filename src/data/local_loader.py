@@ -389,6 +389,11 @@ class LocalDataLoader:
         page_url = safe_get("page_url", "url", "page_location")
         page_title = safe_get("page_title", "title", "page_name")
 
+        # Category hierarchy levels (for more granular segmentation)
+        category_level_1 = safe_get("category_level_1", "category_1", "main_category")
+        category_level_2 = safe_get("category_level_2", "category_2", "subcategory")
+        category_level_3 = safe_get("category_level_3", "category_3", "sub_subcategory")
+
         # Order ID for purchases
         order_id = safe_get("purchase_id", "order_id", "transaction_id", "order_number")
 
@@ -411,6 +416,10 @@ class LocalDataLoader:
             "browser", "os", "location", "timestamp",
             "ingest_timestamp", "type",
             config.customer_id_field,
+            # Category hierarchy fields
+            "category_level_1", "category_1", "main_category",
+            "category_level_2", "category_2", "subcategory",
+            "category_level_3", "category_3", "sub_subcategory",
         }
         # Add revenue and category fields
         known_fields.update(config.revenue_fields)
@@ -427,6 +436,10 @@ class LocalDataLoader:
             product_category=str(product_category) if product_category else None,
             product_price=product_price,
             quantity=quantity,
+            # Category hierarchy levels
+            category_level_1=str(category_level_1) if category_level_1 else None,
+            category_level_2=str(category_level_2) if category_level_2 else None,
+            category_level_3=str(category_level_3) if category_level_3 else None,
             order_id=str(order_id) if order_id else None,
             order_total=order_total,
             search_query=str(search_query) if search_query else None,

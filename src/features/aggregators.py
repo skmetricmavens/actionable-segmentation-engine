@@ -175,55 +175,85 @@ def aggregate_categories(
     events: list[EventRecord],
 ) -> list[CategoryAffinity]:
     """
-    Calculate category affinity scores from events.
+    Calculate category affinity scores from events at multiple hierarchy levels.
 
     Engagement score is based on weighted interactions:
     - View: 1 point
     - Add to cart: 2 points
     - Purchase: 5 points
 
+    Tracks affinities at 3 levels:
+    - Level 1: Top-level category (e.g., "Clothing")
+    - Level 2: Subcategory (e.g., "BASIC TOPS")
+    - Level 3: Detailed category (e.g., "OFF SHOULDER TOPS")
+
     Args:
         events: List of event records for a customer
 
     Returns:
-        List of CategoryAffinity objects sorted by engagement score descending
+        List of CategoryAffinity objects sorted by engagement score descending,
+        including affinities at all available hierarchy levels.
     """
-    category_views: Counter[str] = Counter()
-    category_purchases: Counter[str] = Counter()
-    category_engagement: Counter[str] = Counter()
+    # Track engagement at each level separately
+    # Key: (level, category_name), Value: counts
+    level_views: dict[tuple[int, str], int] = Counter()
+    level_purchases: dict[tuple[int, str], int] = Counter()
+    level_engagement: dict[tuple[int, str], int] = Counter()
+
+    def add_engagement(level: int, category: str | None, event_type: EventType) -> None:
+        """Add engagement for a category at a specific level."""
+        if category is None:
+            return
+        key = (level, category)
+        if event_type == EventType.VIEW_ITEM:
+            level_views[key] += 1
+            level_engagement[key] += 1
+        elif event_type == EventType.VIEW_CATEGORY:
+            level_views[key] += 1
+            level_engagement[key] += 1
+        elif event_type == EventType.ADD_TO_CART:
+            level_engagement[key] += 2
+        elif event_type in (EventType.PURCHASE, EventType.PURCHASE_ITEM):
+            level_purchases[key] += 1
+            level_engagement[key] += 5
 
     for event in events:
-        category = event.properties.product_category
-        if category is None:
-            continue
+        props = event.properties
+        event_type = event.event_type
 
-        if event.event_type == EventType.VIEW_ITEM:
-            category_views[category] += 1
-            category_engagement[category] += 1
-        elif event.event_type == EventType.VIEW_CATEGORY:
-            category_views[category] += 1
-            category_engagement[category] += 1
-        elif event.event_type == EventType.ADD_TO_CART:
-            category_engagement[category] += 2
-        elif event.event_type in (EventType.PURCHASE, EventType.PURCHASE_ITEM):
-            category_purchases[category] += 1
-            category_engagement[category] += 5
+        # Track at each available level
+        # Level 1: Use category_level_1 or fall back to product_category
+        cat_l1 = props.category_level_1 or props.product_category
+        add_engagement(1, cat_l1, event_type)
 
-    if not category_engagement:
+        # Level 2: Subcategory (only if available)
+        if props.category_level_2:
+            add_engagement(2, props.category_level_2, event_type)
+
+        # Level 3: Detailed category (only if available)
+        if props.category_level_3:
+            add_engagement(3, props.category_level_3, event_type)
+
+    if not level_engagement:
         return []
 
-    # Normalize engagement scores to 0-1 range
-    max_engagement = max(category_engagement.values())
+    # Normalize engagement scores within each level
+    # This ensures L1, L2, L3 categories can be compared fairly
+    max_engagement_by_level: dict[int, int] = {}
+    for (level, _), eng in level_engagement.items():
+        max_engagement_by_level[level] = max(max_engagement_by_level.get(level, 0), eng)
 
     affinities: list[CategoryAffinity] = []
-    for category, engagement in category_engagement.items():
-        normalized_score = engagement / max_engagement if max_engagement > 0 else 0.0
+    for (level, category), engagement in level_engagement.items():
+        max_eng = max_engagement_by_level.get(level, 1)
+        normalized_score = engagement / max_eng if max_eng > 0 else 0.0
         affinities.append(
             CategoryAffinity(
                 category=category,
                 engagement_score=normalized_score,
-                view_count=category_views.get(category, 0),
-                purchase_count=category_purchases.get(category, 0),
+                view_count=level_views.get((level, category), 0),
+                purchase_count=level_purchases.get((level, category), 0),
+                level=level,
             )
         )
 

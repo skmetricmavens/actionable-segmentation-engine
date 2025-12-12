@@ -372,52 +372,93 @@ def _extract_segment_traits(
 
     n_profiles = len(profiles)
 
-    # 1. Category affinity analysis
-    category_counts: Counter[str] = Counter()
+    # 1. Category affinity analysis with smart hierarchy selection
+    # Track category counts at each level separately
+    level_category_counts: dict[int, Counter[str]] = {1: Counter(), 2: Counter(), 3: Counter()}
     category_engagement: dict[str, float] = {}
 
     for profile in profiles:
-        if profile.top_category:
-            category_counts[profile.top_category] += 1
-
+        # Track top category at each level
         for affinity in profile.category_affinities:
+            level = affinity.level
+            if level in level_category_counts:
+                level_category_counts[level][affinity.category] += 1
+
             if affinity.category not in category_engagement:
                 category_engagement[affinity.category] = 0.0
             category_engagement[affinity.category] += affinity.engagement_score
 
-    # Top categories by customer count
-    top_categories = category_counts.most_common(3)
-    if top_categories:
-        top_cat, top_count = top_categories[0]
-        pct = (top_count / n_profiles) * 100
-        if pct >= 30:
-            defining_traits.append(f"Strong {top_cat} affinity ({pct:.0f}%)")
-        elif pct >= 15:
-            defining_traits.append(f"Moderate {top_cat} interest ({pct:.0f}%)")
+    # Smart depth selection: find most distinctive level
+    # If L1 is too concentrated (>70%), drill down to L2, then L3
+    def get_best_category_trait(
+        level_counts: dict[int, Counter[str]],
+        n_profiles: int,
+        concentration_threshold: float = 0.70,
+    ) -> tuple[str, int, float] | None:
+        """Find the most distinctive category at the appropriate hierarchy level."""
+        for level in [1, 2, 3]:
+            counts = level_counts.get(level)
+            if not counts:
+                continue
 
-        trait_summary["top_categories"] = [
-            {"category": cat, "customer_count": cnt, "percentage": round(cnt / n_profiles * 100, 1)}
-            for cat, cnt in top_categories
-        ]
+            top_cats = counts.most_common(3)
+            if not top_cats:
+                continue
 
-    # 2. Value-based traits
-    avg_clv = sum(float(p.clv_estimate) for p in profiles) / n_profiles
+            top_cat, top_count = top_cats[0]
+            top_pct = top_count / n_profiles
+
+            # If this level is too concentrated AND we have deeper levels, go deeper
+            if top_pct > concentration_threshold and level < 3:
+                next_level_counts = level_counts.get(level + 1)
+                if next_level_counts and sum(next_level_counts.values()) > 0:
+                    continue  # Try next level
+
+            # This level has good variety, or it's the deepest we can go
+            return (top_cat, level, top_pct)
+
+        return None
+
+    best_trait = get_best_category_trait(level_category_counts, n_profiles)
+
+    if best_trait:
+        top_cat, level, pct = best_trait
+        pct_display = pct * 100
+        level_label = {1: "", 2: "subcategory ", 3: "specific "}[level]
+
+        if pct_display >= 30:
+            defining_traits.append(f"Strong {level_label}{top_cat} affinity ({pct_display:.0f}%)")
+        elif pct_display >= 15:
+            defining_traits.append(f"Moderate {level_label}{top_cat} interest ({pct_display:.0f}%)")
+
+    # Include top categories at each level in summary
+    trait_summary["top_categories"] = {}
+    for level in [1, 2, 3]:
+        level_top = level_category_counts[level].most_common(3)
+        if level_top:
+            trait_summary["top_categories"][f"level_{level}"] = [
+                {"category": cat, "customer_count": cnt, "percentage": round(cnt / n_profiles * 100, 1)}
+                for cat, cnt in level_top
+            ]
+
+    # 2. Value-based traits (using actual revenue, not projected CLV)
+    avg_revenue = sum(float(p.total_revenue) for p in profiles) / n_profiles
     avg_aov = sum(float(p.avg_order_value) for p in profiles) / n_profiles
     avg_purchases = sum(p.total_purchases for p in profiles) / n_profiles
     avg_purchase_freq = sum(p.purchase_frequency_per_month for p in profiles) / n_profiles
 
-    # Classify value tier
-    if avg_clv >= 50000:
+    # Classify value tier based on actual revenue
+    if avg_revenue >= 500:
         defining_traits.append("Premium high-value customers")
-    elif avg_clv >= 10000:
+    elif avg_revenue >= 200:
         defining_traits.append("High-value customers")
-    elif avg_clv >= 1000:
+    elif avg_revenue >= 50:
         defining_traits.append("Mid-value customers")
     else:
         defining_traits.append("Entry-level value customers")
 
     trait_summary["value_metrics"] = {
-        "avg_clv": round(avg_clv, 2),
+        "avg_revenue": round(avg_revenue, 2),
         "avg_order_value": round(avg_aov, 2),
         "avg_total_purchases": round(avg_purchases, 1),
         "avg_purchase_frequency_monthly": round(avg_purchase_freq, 2),
@@ -550,9 +591,10 @@ def create_segments_from_clusters(
         if not profiles_in_cluster:
             continue
 
-        # Calculate segment metrics
+        # Calculate segment metrics (using actual revenue, not projected CLV)
+        # TODO: Replace with ML-based predictive CLV in future
         total_clv = sum(
-            (p.clv_estimate for p in profiles_in_cluster), Decimal("0")
+            (p.total_revenue for p in profiles_in_cluster), Decimal("0")
         )
         avg_clv = total_clv / len(profiles_in_cluster)
         avg_aov = sum(

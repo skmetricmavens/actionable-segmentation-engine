@@ -106,6 +106,11 @@ class EventProperties(BaseSchema):
     product_price: Decimal | None = None
     quantity: int | None = None
 
+    # Hierarchical category levels (for more granular segmentation)
+    category_level_1: str | None = None  # Top level (e.g., "Clothing")
+    category_level_2: str | None = None  # Mid level (e.g., "BASIC TOPS")
+    category_level_3: str | None = None  # Detailed level (e.g., "OFF SHOULDER TOPS")
+
     # Purchase-specific
     order_id: str | None = None
     total_amount: Decimal | None = None
@@ -216,6 +221,7 @@ class CategoryAffinity(BaseSchema):
     engagement_score: Annotated[float, Field(ge=0.0, le=1.0)]
     view_count: int = 0
     purchase_count: int = 0
+    level: int = 1  # Category hierarchy level (1=top, 2=mid, 3=detailed)
 
 
 class CustomerProfile(MutableBaseSchema):
