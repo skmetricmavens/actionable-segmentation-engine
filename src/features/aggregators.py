@@ -57,6 +57,93 @@ class DeviceMetrics(TypedDict):
     mobile_session_ratio: float
 
 
+class PurchaseIntervalMetrics(TypedDict):
+    """Statistics about time between purchases for CLV prediction."""
+
+    intervals: list[float]  # Days between each consecutive purchase
+    interval_mean: float | None  # Average days between purchases
+    interval_std: float | None  # Standard deviation of intervals
+    interval_min: float | None  # Shortest interval
+    interval_max: float | None  # Longest interval
+    interval_cv: float | None  # Coefficient of variation (std/mean)
+    regularity_index: float | None  # 1 - normalized_cv, higher = more regular (0-1)
+
+
+def aggregate_purchase_intervals(
+    events: list[EventRecord],
+) -> PurchaseIntervalMetrics:
+    """
+    Calculate statistics about time between purchases.
+
+    Used for CLV prediction and behavior classification. Customers with
+    regular purchase intervals (low CV) are more predictable.
+
+    Args:
+        events: List of event records for a customer
+
+    Returns:
+        PurchaseIntervalMetrics with interval statistics
+    """
+    import statistics
+
+    # Get purchase events sorted by timestamp
+    purchase_events = sorted(
+        [e for e in events if e.event_type == EventType.PURCHASE],
+        key=lambda e: e.timestamp,
+    )
+
+    # Need at least 2 purchases to calculate intervals
+    if len(purchase_events) < 2:
+        return PurchaseIntervalMetrics(
+            intervals=[],
+            interval_mean=None,
+            interval_std=None,
+            interval_min=None,
+            interval_max=None,
+            interval_cv=None,
+            regularity_index=None,
+        )
+
+    # Calculate intervals between consecutive purchases (in days)
+    intervals: list[float] = []
+    for i in range(1, len(purchase_events)):
+        delta = purchase_events[i].timestamp - purchase_events[i - 1].timestamp
+        intervals.append(delta.total_seconds() / 86400.0)  # Convert to days
+
+    # Calculate statistics
+    interval_mean = statistics.mean(intervals)
+    interval_min = min(intervals)
+    interval_max = max(intervals)
+
+    # Standard deviation (need at least 2 intervals)
+    interval_std: float | None = None
+    interval_cv: float | None = None
+    regularity_index: float | None = None
+
+    if len(intervals) >= 2:
+        interval_std = statistics.stdev(intervals)
+
+        # Coefficient of variation (CV = std/mean)
+        # Lower CV = more regular purchase pattern
+        if interval_mean > 0:
+            interval_cv = interval_std / interval_mean
+
+            # Regularity index: 1 - normalized_cv
+            # Cap CV at 2.0 for normalization (CV > 2 is highly irregular)
+            normalized_cv = min(interval_cv / 2.0, 1.0)
+            regularity_index = 1.0 - normalized_cv
+
+    return PurchaseIntervalMetrics(
+        intervals=intervals,
+        interval_mean=interval_mean,
+        interval_std=interval_std,
+        interval_min=interval_min,
+        interval_max=interval_max,
+        interval_cv=interval_cv,
+        regularity_index=regularity_index,
+    )
+
+
 def aggregate_purchases(
     events: list[EventRecord],
     *,

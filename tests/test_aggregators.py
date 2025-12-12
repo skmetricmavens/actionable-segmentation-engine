@@ -14,11 +14,13 @@ from src.data.schemas import (
 )
 from src.features.aggregators import (
     DeviceMetrics,
+    PurchaseIntervalMetrics,
     PurchaseMetrics,
     SessionMetrics,
     TemporalMetrics,
     aggregate_categories,
     aggregate_device,
+    aggregate_purchase_intervals,
     aggregate_purchases,
     aggregate_sessions,
     aggregate_temporal,
@@ -580,3 +582,175 @@ class TestCalculateChurnRisk:
         risk = calculate_churn_risk(purchase_metrics, session_metrics, customer_tenure_days=365)
 
         assert 0.0 <= risk <= 1.0
+
+
+# =============================================================================
+# PURCHASE INTERVAL TESTS
+# =============================================================================
+
+
+class TestAggregatePurchaseIntervals:
+    """Tests for aggregate_purchase_intervals function."""
+
+    def test_empty_events(self) -> None:
+        """Test with empty events list."""
+        result = aggregate_purchase_intervals([])
+
+        assert result["intervals"] == []
+        assert result["interval_mean"] is None
+        assert result["interval_std"] is None
+        assert result["regularity_index"] is None
+
+    def test_single_purchase(self) -> None:
+        """Test with single purchase - can't calculate intervals."""
+        events = [
+            make_event("e1", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 15, tzinfo=timezone.utc))
+        ]
+
+        result = aggregate_purchase_intervals(events)
+
+        assert result["intervals"] == []
+        assert result["interval_mean"] is None
+        assert result["interval_cv"] is None
+
+    def test_two_purchases(self) -> None:
+        """Test with two purchases - single interval."""
+        events = [
+            make_event("e1", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            make_event("e2", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 31, tzinfo=timezone.utc)),
+        ]
+
+        result = aggregate_purchase_intervals(events)
+
+        assert len(result["intervals"]) == 1
+        assert result["interval_mean"] == 30.0  # 30 days
+        assert result["interval_min"] == 30.0
+        assert result["interval_max"] == 30.0
+        # With only 1 interval, can't calculate std/cv
+        assert result["interval_std"] is None
+        assert result["interval_cv"] is None
+
+    def test_regular_purchases(self) -> None:
+        """Test customer with regular purchase intervals."""
+        # Purchase every 30 days consistently
+        events = [
+            make_event("e1", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            make_event("e2", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 31, tzinfo=timezone.utc)),
+            make_event("e3", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 3, 1, tzinfo=timezone.utc)),
+            make_event("e4", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 3, 31, tzinfo=timezone.utc)),
+        ]
+
+        result = aggregate_purchase_intervals(events)
+
+        assert len(result["intervals"]) == 3
+        assert result["interval_mean"] is not None
+        assert result["interval_std"] is not None
+        assert result["interval_cv"] is not None
+        # Regular customer should have high regularity index
+        assert result["regularity_index"] is not None
+        assert result["regularity_index"] > 0.5
+
+    def test_irregular_purchases(self) -> None:
+        """Test customer with irregular purchase intervals."""
+        # Purchases at very different intervals: 7 days, 60 days, 3 days
+        events = [
+            make_event("e1", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            make_event("e2", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 8, tzinfo=timezone.utc)),  # +7 days
+            make_event("e3", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 3, 8, tzinfo=timezone.utc)),  # +60 days
+            make_event("e4", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 3, 11, tzinfo=timezone.utc)),  # +3 days
+        ]
+
+        result = aggregate_purchase_intervals(events)
+
+        assert len(result["intervals"]) == 3
+        assert result["interval_cv"] is not None
+        # Irregular customer should have high CV (std/mean)
+        assert result["interval_cv"] > 0.5
+        # And lower regularity index
+        assert result["regularity_index"] is not None
+        assert result["regularity_index"] < 0.7
+
+    def test_ignores_non_purchase_events(self) -> None:
+        """Test that non-purchase events are ignored."""
+        events = [
+            make_event("e1", "cust_1", EventType.VIEW_ITEM,
+                       timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            make_event("e2", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 15, tzinfo=timezone.utc)),
+            make_event("e3", "cust_1", EventType.ADD_TO_CART,
+                       timestamp=datetime(2024, 1, 20, tzinfo=timezone.utc)),
+            make_event("e4", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 2, 15, tzinfo=timezone.utc)),
+        ]
+
+        result = aggregate_purchase_intervals(events)
+
+        # Should only consider 2 purchase events
+        assert len(result["intervals"]) == 1
+        assert result["interval_mean"] == 31.0  # Jan 15 to Feb 15
+
+    def test_unsorted_events(self) -> None:
+        """Test that events are sorted by timestamp."""
+        # Events out of order
+        events = [
+            make_event("e3", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 3, 1, tzinfo=timezone.utc)),
+            make_event("e1", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            make_event("e2", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 2, 1, tzinfo=timezone.utc)),
+        ]
+
+        result = aggregate_purchase_intervals(events)
+
+        # Should sort and calculate correctly: Jan→Feb, Feb→Mar
+        assert len(result["intervals"]) == 2
+        assert result["interval_min"] is not None
+        assert result["interval_min"] >= 28  # Feb has fewer days
+
+    def test_same_day_purchases(self) -> None:
+        """Test purchases on the same day."""
+        events = [
+            make_event("e1", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc)),
+            make_event("e2", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 15, 14, 0, tzinfo=timezone.utc)),
+            make_event("e3", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 16, 10, 0, tzinfo=timezone.utc)),
+        ]
+
+        result = aggregate_purchase_intervals(events)
+
+        # Intervals should be in days (including fractions)
+        assert len(result["intervals"]) == 2
+        # First interval is 4 hours = 4/24 = 0.167 days
+        assert result["interval_min"] is not None
+        assert result["interval_min"] < 1.0
+
+    def test_regularity_index_bounds(self) -> None:
+        """Test that regularity index is between 0 and 1."""
+        # Very irregular: intervals of 1 day and 100 days
+        events = [
+            make_event("e1", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc)),
+            make_event("e2", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 1, 2, tzinfo=timezone.utc)),  # +1 day
+            make_event("e3", "cust_1", EventType.PURCHASE,
+                       timestamp=datetime(2024, 4, 11, tzinfo=timezone.utc)),  # +99 days
+        ]
+
+        result = aggregate_purchase_intervals(events)
+
+        assert result["regularity_index"] is not None
+        assert 0.0 <= result["regularity_index"] <= 1.0

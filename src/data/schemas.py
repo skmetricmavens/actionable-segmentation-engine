@@ -67,6 +67,24 @@ class ConfidenceLevel(str, Enum):
     LOW = "low"
 
 
+class BehaviorType(str, Enum):
+    """Customer purchase behavior classification for CLV prediction.
+
+    Based on purchase interval coefficient of variation (CV = std/mean):
+    - REGULAR: CV < 0.5, predictable purchase timing
+    - IRREGULAR: CV 0.5-1.0, variable purchase timing
+    - LONG_CYCLE: CV > 1.0 or interval_mean > 90 days, infrequent/seasonal
+    - NEW: < 2 purchases, insufficient data for classification
+    - ONE_TIME: Single purchase only
+    """
+
+    REGULAR = "regular"
+    IRREGULAR = "irregular"
+    LONG_CYCLE = "long_cycle"
+    NEW = "new"
+    ONE_TIME = "one_time"
+
+
 # =============================================================================
 # BASE MODELS
 # =============================================================================
@@ -224,6 +242,21 @@ class CategoryAffinity(BaseSchema):
     level: int = 1  # Category hierarchy level (1=top, 2=mid, 3=detailed)
 
 
+class PurchaseIntervalMetrics(BaseSchema):
+    """Statistics about time between purchases for CLV prediction.
+
+    These metrics help classify customer purchase behavior and improve
+    CLV prediction accuracy by accounting for purchase timing patterns.
+    """
+
+    interval_mean: float | None = None  # Average days between purchases
+    interval_std: float | None = None  # Standard deviation of intervals
+    interval_min: float | None = None  # Shortest interval (days)
+    interval_max: float | None = None  # Longest interval (days)
+    interval_cv: float | None = None  # Coefficient of variation (std/mean)
+    regularity_index: Annotated[float, Field(ge=0.0, le=1.0)] | None = None  # Higher = more regular
+
+
 class CustomerProfile(MutableBaseSchema):
     """Canonical customer profile with aggregated metrics and traits."""
 
@@ -268,6 +301,16 @@ class CustomerProfile(MutableBaseSchema):
     # Refund metrics
     total_refunds: Annotated[int, Field(ge=0)] = 0
     refund_rate: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+
+    # Purchase interval metrics (for CLV prediction)
+    purchase_intervals: PurchaseIntervalMetrics | None = None
+    behavior_type: BehaviorType = BehaviorType.NEW
+
+    # ML CLV prediction metadata (populated when ML model is used)
+    clv_predicted: Annotated[Decimal, Field(ge=0)] | None = None  # ML-predicted CLV
+    clv_prediction_confidence: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    clv_model_version: str | None = None  # Version of model that made prediction
+    clv_top_features: list[str] = Field(default_factory=list)  # Top 3 CLV drivers
 
     def __repr__(self) -> str:
         return (
