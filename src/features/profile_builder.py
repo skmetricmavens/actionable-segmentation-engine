@@ -15,19 +15,69 @@ from typing import Iterable, Iterator
 
 from src.data.joiner import MergeMap, apply_merge_to_customer_id, get_all_ids_for_customer
 from src.data.schemas import (
+    BehaviorType,
     CustomerProfile,
     EventRecord,
+    PurchaseIntervalMetrics,
 )
 from src.exceptions import InsufficientDataError, ProfileBuildError
 from src.features.aggregators import (
     aggregate_categories,
     aggregate_device,
+    aggregate_purchase_intervals,
     aggregate_purchases,
     aggregate_sessions,
     aggregate_temporal,
     calculate_churn_risk,
     calculate_clv_estimate,
 )
+
+
+def _classify_behavior_type(
+    total_purchases: int,
+    interval_cv: float | None,
+    interval_mean: float | None,
+    *,
+    regular_cv_threshold: float = 0.5,
+    irregular_cv_threshold: float = 1.0,
+    long_cycle_interval_days: float = 90.0,
+) -> BehaviorType:
+    """
+    Classify customer purchase behavior based on interval patterns.
+
+    Args:
+        total_purchases: Number of purchases
+        interval_cv: Coefficient of variation of purchase intervals
+        interval_mean: Mean purchase interval in days
+        regular_cv_threshold: Max CV for regular classification
+        irregular_cv_threshold: Max CV for irregular classification
+        long_cycle_interval_days: Min mean interval for long-cycle classification
+
+    Returns:
+        BehaviorType classification
+    """
+    # New customers have no purchase history
+    if total_purchases == 0:
+        return BehaviorType.NEW
+
+    # One-time purchasers
+    if total_purchases == 1:
+        return BehaviorType.ONE_TIME
+
+    # Need interval data for further classification
+    if interval_cv is None or interval_mean is None:
+        return BehaviorType.NEW
+
+    # Regular purchasers: low variation in purchase timing
+    if interval_cv <= regular_cv_threshold:
+        return BehaviorType.REGULAR
+
+    # Long-cycle purchasers: high mean interval but moderate variation
+    if interval_mean >= long_cycle_interval_days and interval_cv <= irregular_cv_threshold:
+        return BehaviorType.LONG_CYCLE
+
+    # Irregular purchasers: high variation
+    return BehaviorType.IRREGULAR
 
 
 def group_events_by_customer(
@@ -122,6 +172,28 @@ def build_profile(
         customer_tenure_days,
     )
 
+    # Purchase intervals for CLV prediction
+    interval_data = aggregate_purchase_intervals(events)
+
+    # Convert to Pydantic model if we have interval data
+    purchase_intervals: PurchaseIntervalMetrics | None = None
+    if interval_data["interval_mean"] is not None:
+        purchase_intervals = PurchaseIntervalMetrics(
+            interval_mean=interval_data["interval_mean"],
+            interval_std=interval_data["interval_std"],
+            interval_min=interval_data["interval_min"],
+            interval_max=interval_data["interval_max"],
+            interval_cv=interval_data["interval_cv"],
+            regularity_index=interval_data["regularity_index"],
+        )
+
+    # Classify behavior type
+    behavior_type = _classify_behavior_type(
+        total_purchases=purchase_metrics["total_purchases"],
+        interval_cv=interval_data["interval_cv"],
+        interval_mean=interval_data["interval_mean"],
+    )
+
     # Top category
     top_category = category_affinities[0].category if category_affinities else None
 
@@ -159,6 +231,9 @@ def build_profile(
         # Refunds
         total_refunds=purchase_metrics["total_refunds"],
         refund_rate=purchase_metrics["refund_rate"],
+        # CLV prediction features
+        purchase_intervals=purchase_intervals,
+        behavior_type=behavior_type,
     )
 
 
