@@ -38,7 +38,11 @@ htmlcov/
 
 # Outputs
 outputs/
+output/
 reports/
+
+# Models
+models/
 
 # mypy
 .mypy_cache/

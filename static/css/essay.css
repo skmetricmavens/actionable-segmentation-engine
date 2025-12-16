@@ -1,0 +1,596 @@
+/**
+ * Essay Scrollytelling Styles
+ * Pudding.cool-inspired visual essay styling
+ */
+
+/* =============================================================================
+   RESET & BASE
+   ============================================================================= */
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.6;
+    color: #1a202c;
+    background: #f7fafc;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* =============================================================================
+   TYPOGRAPHY
+   ============================================================================= */
+
+h1, h2, h3, h4, h5, h6 {
+    margin: 0;
+    line-height: 1.3;
+    font-weight: 700;
+}
+
+h1 { font-size: 2.5rem; }
+h2 { font-size: 1.75rem; }
+h3 { font-size: 1.25rem; }
+
+p { margin: 0 0 1rem; }
+
+a {
+    color: #4299e1;
+    text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+/* =============================================================================
+   SCROLL PROGRESS
+   ============================================================================= */
+
+.scroll-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    z-index: 1000;
+    background: transparent;
+}
+
+.scroll-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #4299e1, #68d391);
+    width: 0;
+    transition: width 0.1s ease;
+}
+
+/* =============================================================================
+   EXECUTIVE BANNER
+   ============================================================================= */
+
+.executive-banner {
+    background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+    color: white;
+    padding: 5rem 2rem;
+    text-align: center;
+    min-height: 60vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.banner-content {
+    max-width: 900px;
+}
+
+.executive-banner h1 {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    background: linear-gradient(135deg, #fff, #cbd5e0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.executive-banner .subtitle {
+    font-size: 1.25rem;
+    opacity: 0.9;
+    margin-bottom: 2.5rem;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.key-insights {
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    margin: 2rem 0;
+}
+
+.insight-card {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 1.5rem 2rem;
+    min-width: 200px;
+    backdrop-filter: blur(10px);
+    transition: transform 0.2s, background 0.2s;
+}
+
+.insight-card:hover {
+    transform: translateY(-4px);
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.insight-value {
+    display: block;
+    font-size: 2.25rem;
+    font-weight: 700;
+    color: #68d391;
+    line-height: 1.2;
+}
+
+.insight-label {
+    display: block;
+    font-size: 0.9rem;
+    opacity: 0.8;
+    margin-top: 0.5rem;
+}
+
+.metadata {
+    font-size: 0.875rem;
+    opacity: 0.6;
+    margin-top: 2rem;
+}
+
+.metadata .separator {
+    margin: 0 0.75rem;
+}
+
+/* =============================================================================
+   TABLE OF CONTENTS
+   ============================================================================= */
+
+.toc {
+    max-width: 800px;
+    margin: 3rem auto;
+    padding: 2rem;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+}
+
+.toc h2 {
+    font-size: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #718096;
+    margin-bottom: 1rem;
+}
+
+.toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: toc-counter;
+}
+
+.toc li {
+    counter-increment: toc-counter;
+    margin: 0;
+}
+
+.toc li a {
+    display: flex;
+    align-items: center;
+    padding: 1rem 0;
+    border-bottom: 1px solid #e2e8f0;
+    color: #2d3748;
+    transition: color 0.2s, padding-left 0.2s;
+}
+
+.toc li:last-child a {
+    border-bottom: none;
+}
+
+.toc li a:hover {
+    color: #4299e1;
+    padding-left: 0.5rem;
+    text-decoration: none;
+}
+
+.toc li a::before {
+    content: counter(toc-counter);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: #edf2f7;
+    border-radius: 50%;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #4a5568;
+    margin-right: 1rem;
+    flex-shrink: 0;
+}
+
+/* =============================================================================
+   ESSAY CONTENT
+   ============================================================================= */
+
+.essay-content {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.essay-section {
+    margin: 5rem 0;
+    background: white;
+    border-radius: 20px;
+    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+.section-header {
+    padding: 3rem;
+    border-bottom: 1px solid #e2e8f0;
+    text-align: center;
+}
+
+.section-header h2 {
+    color: #1a202c;
+    margin-bottom: 1rem;
+}
+
+.executive-summary {
+    font-size: 1.125rem;
+    color: #4a5568;
+    max-width: 700px;
+    margin: 0 auto;
+}
+
+/* =============================================================================
+   SCROLLYTELLING
+   ============================================================================= */
+
+.scrolly-container {
+    display: flex;
+    position: relative;
+    min-height: 100vh;
+}
+
+.scrolly-graphic {
+    flex: 0 0 55%;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, #f7fafc 0%, #edf2f7 100%);
+    padding: 2rem;
+}
+
+.chart-container {
+    width: 100%;
+    max-width: 700px;
+    background: white;
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+.scrolly-text {
+    flex: 0 0 45%;
+    padding: 3rem 2rem;
+}
+
+.step {
+    min-height: 70vh;
+    display: flex;
+    align-items: center;
+    padding: 2rem 0;
+    opacity: 0.3;
+    transition: opacity 0.3s;
+}
+
+.step.is-active {
+    opacity: 1;
+}
+
+.step-content {
+    background: white;
+    padding: 2rem;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    max-width: 400px;
+}
+
+.step-content.headline h3 {
+    font-size: 1.5rem;
+    color: #1a202c;
+    margin: 0;
+}
+
+.step-content.insight {
+    border-left: 4px solid #4299e1;
+    background: #ebf8ff;
+}
+
+.step-content.callout {
+    border-left: 4px solid #68d391;
+    background: #f0fff4;
+}
+
+.step-content p {
+    margin: 0;
+    color: #4a5568;
+    font-size: 1rem;
+    line-height: 1.7;
+}
+
+/* =============================================================================
+   MARKETING NARRATIVE
+   ============================================================================= */
+
+.marketing-narrative {
+    padding: 3rem;
+    background: #f7fafc;
+    border-top: 1px solid #e2e8f0;
+}
+
+.marketing-narrative h4 {
+    color: #2d3748;
+    margin-bottom: 1rem;
+}
+
+.marketing-narrative p {
+    color: #4a5568;
+    max-width: 800px;
+}
+
+/* =============================================================================
+   TECHNICAL APPENDIX
+   ============================================================================= */
+
+.technical-appendix {
+    border-top: 1px solid #e2e8f0;
+}
+
+.technical-appendix summary {
+    padding: 1.25rem 2rem;
+    cursor: pointer;
+    font-weight: 600;
+    color: #4a5568;
+    background: #f7fafc;
+    transition: background 0.2s;
+    list-style: none;
+}
+
+.technical-appendix summary::-webkit-details-marker {
+    display: none;
+}
+
+.technical-appendix summary::before {
+    content: '▶';
+    display: inline-block;
+    margin-right: 0.75rem;
+    font-size: 0.75rem;
+    transition: transform 0.2s;
+}
+
+.technical-appendix[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.technical-appendix summary:hover {
+    background: #edf2f7;
+}
+
+.appendix-content {
+    padding: 2rem;
+    font-size: 0.9rem;
+    color: #4a5568;
+    background: white;
+}
+
+.metrics-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1.5rem;
+}
+
+.metrics-table td {
+    padding: 0.75rem;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.metrics-table td:first-child {
+    font-weight: 600;
+    color: #2d3748;
+    width: 40%;
+}
+
+/* =============================================================================
+   CHART STYLES
+   ============================================================================= */
+
+.chart-tooltip {
+    position: absolute;
+    background: #1a202c;
+    color: white;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    pointer-events: none;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    max-width: 200px;
+}
+
+.chart-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    color: #a0aec0;
+}
+
+.chart-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    color: #fc8181;
+    text-align: center;
+}
+
+.chart-error small {
+    color: #a0aec0;
+    margin-top: 0.5rem;
+}
+
+/* =============================================================================
+   METRICS DISPLAY
+   ============================================================================= */
+
+.metrics-wrapper {
+    display: flex;
+    gap: 2rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 2rem;
+}
+
+.metric-card {
+    text-align: center;
+    padding: 1.5rem;
+    min-width: 150px;
+}
+
+.metric-value {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.metric-label {
+    font-size: 0.875rem;
+    color: #718096;
+    margin-top: 0.5rem;
+}
+
+/* =============================================================================
+   FOOTER
+   ============================================================================= */
+
+.essay-footer {
+    text-align: center;
+    padding: 3rem 2rem;
+    background: #1a202c;
+    color: #a0aec0;
+}
+
+.essay-footer p {
+    margin: 0.5rem 0;
+    font-size: 0.875rem;
+}
+
+/* =============================================================================
+   RESPONSIVE
+   ============================================================================= */
+
+@media (max-width: 1024px) {
+    .scrolly-container {
+        flex-direction: column;
+    }
+
+    .scrolly-graphic {
+        position: relative;
+        height: auto;
+        min-height: 50vh;
+        flex: none;
+    }
+
+    .scrolly-text {
+        flex: none;
+        padding: 2rem 1rem;
+    }
+
+    .step {
+        min-height: auto;
+        padding: 1.5rem 0;
+    }
+
+    .step-content {
+        max-width: none;
+    }
+
+    .executive-banner h1 {
+        font-size: 2rem;
+    }
+
+    .key-insights {
+        gap: 1rem;
+    }
+
+    .insight-card {
+        min-width: 150px;
+        padding: 1rem 1.5rem;
+    }
+
+    .insight-value {
+        font-size: 1.75rem;
+    }
+}
+
+@media (max-width: 640px) {
+    .executive-banner {
+        padding: 3rem 1rem;
+    }
+
+    .section-header {
+        padding: 2rem 1rem;
+    }
+
+    .essay-content {
+        padding: 1rem;
+    }
+
+    .essay-section {
+        margin: 2rem 0;
+        border-radius: 12px;
+    }
+}
+
+/* =============================================================================
+   PRINT STYLES
+   ============================================================================= */
+
+@media print {
+    .scroll-progress,
+    .scrolly-graphic {
+        display: none;
+    }
+
+    .scrolly-container {
+        display: block;
+    }
+
+    .step {
+        min-height: auto;
+        opacity: 1;
+        page-break-inside: avoid;
+    }
+
+    .essay-section {
+        page-break-after: always;
+        box-shadow: none;
+        border: 1px solid #e2e8f0;
+    }
+}
