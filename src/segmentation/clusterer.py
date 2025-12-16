@@ -9,7 +9,7 @@ Produces segment candidates that can be evaluated by LLM for actionability.
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -23,6 +23,9 @@ from src.data.schemas import (
     SegmentMember,
 )
 from src.exceptions import ClusteringError, InsufficientDataError
+
+if TYPE_CHECKING:
+    from src.features.clv.predictor import CLVPredictor
 
 
 @dataclass
@@ -557,6 +560,7 @@ def create_segments_from_clusters(
     clustering_result: ClusteringResult,
     *,
     segment_id_prefix: str = "segment",
+    clv_predictor: "CLVPredictor | None" = None,
 ) -> list[Segment]:
     """
     Create Segment objects from clustering results.
@@ -565,6 +569,8 @@ def create_segments_from_clusters(
         profiles: List of customer profiles (same order as clustering)
         clustering_result: Results from cluster_customers
         segment_id_prefix: Prefix for segment IDs
+        clv_predictor: Optional CLVPredictor for ML-based CLV predictions.
+                      If None, falls back to using total_revenue as CLV proxy.
 
     Returns:
         List of Segment objects
@@ -574,6 +580,13 @@ def create_segments_from_clusters(
             f"Profile count ({len(profiles)}) doesn't match clustering samples "
             f"({clustering_result.n_samples})"
         )
+
+    # Pre-compute CLV predictions if predictor is available
+    clv_lookup: dict[str, Decimal] = {}
+    if clv_predictor is not None:
+        predictions = clv_predictor.predict_batch(profiles)
+        for pred in predictions:
+            clv_lookup[pred.customer_id] = pred.predicted_clv
 
     # Group profiles by cluster
     cluster_profiles: dict[int, list[CustomerProfile]] = {
@@ -591,11 +604,15 @@ def create_segments_from_clusters(
         if not profiles_in_cluster:
             continue
 
-        # Calculate segment metrics (using actual revenue, not projected CLV)
-        # TODO: Replace with ML-based predictive CLV in future
-        total_clv = sum(
-            (p.total_revenue for p in profiles_in_cluster), Decimal("0")
-        )
+        # Calculate segment metrics using ML-predicted CLV (or total_revenue fallback)
+        if clv_predictor is not None:
+            total_clv = sum(
+                clv_lookup[p.internal_customer_id] for p in profiles_in_cluster
+            )
+        else:
+            total_clv = sum(
+                (p.total_revenue for p in profiles_in_cluster), Decimal("0")
+            )
         avg_clv = total_clv / len(profiles_in_cluster)
         avg_aov = sum(
             (p.avg_order_value for p in profiles_in_cluster), Decimal("0")

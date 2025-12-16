@@ -16,7 +16,7 @@ Architecture Notes:
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import faiss
 import numpy as np
@@ -24,6 +24,9 @@ from numpy.typing import NDArray
 from sklearn.preprocessing import StandardScaler
 
 from src.data.schemas import CustomerProfile, CategoryAffinity
+
+if TYPE_CHECKING:
+    from src.features.clv.predictor import CLVPredictor
 
 
 # =============================================================================
@@ -338,6 +341,7 @@ class WhitespaceAnalyzer:
         similarity_threshold: float = 0.5,
         top_k_neighbors: int = 5,
         top_candidates_per_category: int = 100,
+        clv_predictor: "CLVPredictor | None" = None,
     ):
         """
         Initialize WhitespaceAnalyzer.
@@ -348,12 +352,73 @@ class WhitespaceAnalyzer:
             similarity_threshold: Min similarity to be considered a lookalike
             top_k_neighbors: Number of nearest buyers to consider
             top_candidates_per_category: Max candidates to return per category
+            clv_predictor: Optional CLVPredictor for ML-based CLV predictions.
+                          If None, falls back to using total_revenue as CLV proxy.
         """
         self.min_seed_size = min_seed_size
         self.min_candidate_engagement = min_candidate_engagement
         self.similarity_threshold = similarity_threshold
         self.top_k_neighbors = top_k_neighbors
         self.top_candidates_per_category = top_candidates_per_category
+        self._clv_predictor = clv_predictor
+        self._clv_cache: dict[str, Decimal] = {}  # Cache predictions by customer_id
+
+    def _get_clv(self, profile: CustomerProfile) -> Decimal:
+        """
+        Get CLV for a customer profile.
+
+        Uses ML predictor if available, otherwise falls back to total_revenue.
+
+        Args:
+            profile: Customer profile
+
+        Returns:
+            Predicted CLV or total_revenue as fallback
+        """
+        if self._clv_predictor is None:
+            return profile.total_revenue
+
+        # Check cache first
+        if profile.internal_customer_id in self._clv_cache:
+            return self._clv_cache[profile.internal_customer_id]
+
+        # Predict and cache
+        prediction = self._clv_predictor.predict(profile)
+        self._clv_cache[profile.internal_customer_id] = prediction.predicted_clv
+        return prediction.predicted_clv
+
+    def _get_avg_clv(self, profiles: list[CustomerProfile]) -> Decimal:
+        """
+        Get average CLV for a list of profiles.
+
+        Uses ML predictor if available for batch efficiency.
+
+        Args:
+            profiles: List of customer profiles
+
+        Returns:
+            Average predicted CLV or average total_revenue as fallback
+        """
+        if not profiles:
+            return Decimal("0")
+
+        if self._clv_predictor is None:
+            return sum(p.total_revenue for p in profiles) / len(profiles)
+
+        # Use batch prediction for efficiency
+        # First check which profiles need prediction
+        uncached = [p for p in profiles if p.internal_customer_id not in self._clv_cache]
+
+        if uncached:
+            predictions = self._clv_predictor.predict_batch(uncached)
+            for pred in predictions:
+                self._clv_cache[pred.customer_id] = pred.predicted_clv
+
+        # Sum from cache
+        total_clv = sum(
+            self._clv_cache[p.internal_customer_id] for p in profiles
+        )
+        return total_clv / len(profiles)
 
     def analyze(
         self,
@@ -447,12 +512,10 @@ class WhitespaceAnalyzer:
             return None
 
         if not candidates:
-            # Using actual revenue instead of projected CLV
-            # TODO: Replace with ML-based predictive CLV in future
             return CategoryWhitespace(
                 category=category,
                 n_buyers=len(buyers),
-                buyer_avg_clv=sum(b.total_revenue for b in buyers) / len(buyers),
+                buyer_avg_clv=self._get_avg_clv(buyers),
                 buyer_avg_purchases=sum(b.total_purchases for b in buyers) / len(buyers),
                 n_candidates=0,
                 n_lookalikes=0,
@@ -509,9 +572,8 @@ class WhitespaceAnalyzer:
         lookalike_candidates.sort(key=lambda x: x.similarity_score, reverse=True)
         top_candidates = lookalike_candidates[: self.top_candidates_per_category]
 
-        # Calculate opportunity value using actual revenue (not projected CLV)
-        # TODO: Replace with ML-based predictive CLV in future
-        buyer_avg_clv = sum(b.total_revenue for b in buyers) / len(buyers)
+        # Calculate opportunity value using ML-predicted CLV (or total_revenue fallback)
+        buyer_avg_clv = self._get_avg_clv(buyers)
         total_opportunity = buyer_avg_clv * len(lookalike_candidates)
 
         # Generate WHY explanations
@@ -571,7 +633,7 @@ class WhitespaceAnalyzer:
                 "avg_page_views": round(sum(b.total_page_views for b in buyers) / len(buyers), 1),
                 "avg_items_viewed": round(sum(b.total_items_viewed for b in buyers) / len(buyers), 1),
                 "avg_cart_additions": round(sum(b.total_cart_additions for b in buyers) / len(buyers), 1),
-                "avg_clv": round(float(sum(b.total_revenue for b in buyers) / len(buyers)), 2),
+                "avg_clv": round(float(self._get_avg_clv(buyers)), 2),
                 "avg_purchases": round(sum(b.total_purchases for b in buyers) / len(buyers), 1),
             }
 
@@ -790,9 +852,8 @@ class WhitespaceAnalyzer:
 
         lookalikes.sort(key=lambda x: x.similarity_score, reverse=True)
 
-        # Using actual revenue instead of projected CLV
-        # TODO: Replace with ML-based predictive CLV in future
-        buyer_avg_clv = sum(t.total_revenue for t in target_buyers) / len(target_buyers)
+        # Calculate CLV using ML predictor (or total_revenue fallback)
+        buyer_avg_clv = self._get_avg_clv(target_buyers)
 
         return CategoryWhitespace(
             category=f"{source_category} -> {target_category}",
